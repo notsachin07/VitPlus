@@ -26,20 +26,35 @@ class ConnectionStatusNotifier extends StateNotifier<ConnectionStatus> {
 
   ConnectionStatusNotifier(this._wifiService) : super(ConnectionStatus.disconnected);
 
-  Future<void> connect(String ssid, String username, String password) async {
+  /// Returns ConnectionResult to allow UI to show appropriate message
+  Future<ConnectionResult> connect(String ssid, String username, String password) async {
     state = ConnectionStatus.connecting;
     try {
       final result = await _wifiService.connectToNetwork(ssid, username, password);
-      state = result ? ConnectionStatus.connected : ConnectionStatus.failed;
+      switch (result) {
+        case ConnectionResult.success:
+          state = ConnectionStatus.connected;
+          break;
+        case ConnectionResult.enterpriseNeedsCredentials:
+          state = ConnectionStatus.failed;
+          break;
+        case ConnectionResult.networkNotFound:
+        case ConnectionResult.failed:
+          state = ConnectionStatus.failed;
+          break;
+      }
+      return result;
     } catch (e) {
       state = ConnectionStatus.failed;
+      return ConnectionResult.failed;
     }
   }
 
-  Future<void> disconnect() async {
+  Future<bool> disconnect() async {
     state = ConnectionStatus.disconnecting;
-    await _wifiService.disconnect();
-    state = ConnectionStatus.disconnected;
+    final success = await _wifiService.disconnect();
+    state = success ? ConnectionStatus.disconnected : ConnectionStatus.failed;
+    return success;
   }
 
   void updateStatus(ConnectionStatus status) {

@@ -4,12 +4,36 @@ import 'package:collection/collection.dart';
 import '../models/wifi_network.dart';
 import 'storage_service.dart';
 
+/// Exception thrown when Windows Location Services are disabled
+class LocationPermissionException implements Exception {
+  final String message;
+  LocationPermissionException([this.message = 'Location services are required to scan WiFi networks']);
+  
+  @override
+  String toString() => message;
+}
+
+/// Result of a connection attempt
+enum ConnectionResult {
+  success,
+  failed,
+  enterpriseNeedsCredentials,
+  networkNotFound,
+}
+
 class WiFiService {
   static const String shyChar = '\u00ad';
 
   static const List<String> campusSSIDs = ['VIT2.4G', 'VIT5G'];
   static const List<String> hostelSSIDs = ['MH4-WIFI', 'MH5-WIFI', 'LH1-WIFI'];
   static const List<String> enterpriseSSIDs = ['MH6-WIFI', 'LH3-WIFI'];
+
+  /// Check if location permission error is present in the output
+  bool _isLocationPermissionError(String output) {
+    return output.contains('location permission') ||
+           output.contains('Location services') ||
+           output.contains('privacy-location');
+  }
 
   Future<List<WiFiNetwork>> scanNetworks() async {
     try {
@@ -19,9 +43,19 @@ class WiFiService {
         stdoutEncoding: const SystemEncoding(),
       );
 
+      final stdout = result.stdout as String;
+      final stderr = result.stderr as String;
+
+      // Check for location permission error
+      if (_isLocationPermissionError(stdout) || _isLocationPermissionError(stderr)) {
+        throw LocationPermissionException();
+      }
+
       if (result.exitCode != 0) return [];
 
-      return _parseNetworkScan(result.stdout as String);
+      return _parseNetworkScan(stdout);
+    } on LocationPermissionException {
+      rethrow;
     } catch (e) {
       return [];
     }
@@ -93,10 +127,17 @@ class WiFiService {
         stdoutEncoding: const SystemEncoding(),
       );
 
+      final stdout = result.stdout as String;
+      final stderr = result.stderr as String;
+
+      // Check for location permission error
+      if (_isLocationPermissionError(stdout) || _isLocationPermissionError(stderr)) {
+        throw LocationPermissionException();
+      }
+
       if (result.exitCode != 0) return null;
 
-      final output = result.stdout as String;
-      final lines = output.split('\n');
+      final lines = stdout.split('\n');
       
       for (final line in lines) {
         if (line.trim().startsWith('SSID') && !line.contains('BSSID')) {
@@ -108,28 +149,108 @@ class WiFiService {
       }
       
       return null;
+    } on LocationPermissionException {
+      rethrow;
     } catch (e) {
       return null;
     }
   }
 
-  Future<bool> connectToNetwork(String ssid, String username, String password) async {
+  Future<ConnectionResult> connectToNetwork(String ssid, String username, String password) async {
     final networks = await scanNetworks();
     final network = networks.firstWhereOrNull((n) => n.ssid == ssid);
 
-    if (network == null) return false;
+    if (network == null) return ConnectionResult.networkNotFound;
 
     if (network.isEnterprise) {
-      return await _connectEnterprise(ssid, username, password);
+      // For enterprise networks, just try to connect
+      // Windows will use cached credentials if available
+      final connected = await _connectEnterpriseSimple(ssid);
+      if (connected) {
+        return ConnectionResult.success;
+      } else {
+        // Connection failed - user needs to enter credentials manually
+        return ConnectionResult.enterpriseNeedsCredentials;
+      }
     } else if (network.isOpen) {
       final connected = await _connectOpen(ssid);
       if (connected) {
         await Future.delayed(const Duration(seconds: 2));
-        return await _loginCaptivePortal(network.location, username, password);
+        final portalSuccess = await _loginCaptivePortal(network.location, username, password);
+        return portalSuccess ? ConnectionResult.success : ConnectionResult.failed;
       }
-      return false;
+      return ConnectionResult.failed;
     } else {
-      return await _connectWPA(ssid, password);
+      final connected = await _connectWPA(ssid, password);
+      return connected ? ConnectionResult.success : ConnectionResult.failed;
+    }
+  }
+
+  /// Simple enterprise connection - just try to connect
+  /// Windows will use cached credentials if available
+  Future<bool> _connectEnterpriseSimple(String ssid) async {
+    try {
+      // Just try to connect - Windows will use cached credentials if available
+      final result = await Process.run(
+        'netsh',
+        ['wlan', 'connect', 'name=$ssid'],
+      );
+
+      if (result.exitCode != 0) {
+        // Profile might not exist, try to add a basic one first
+        final profileXml = '''<?xml version="1.0"?>
+<WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">
+  <name>$ssid</name>
+  <SSIDConfig>
+    <SSID>
+      <name>$ssid</name>
+    </SSID>
+  </SSIDConfig>
+  <connectionType>ESS</connectionType>
+  <connectionMode>manual</connectionMode>
+  <MSM>
+    <security>
+      <authEncryption>
+        <authentication>WPA2</authentication>
+        <encryption>AES</encryption>
+        <useOneX>true</useOneX>
+      </authEncryption>
+    </security>
+  </MSM>
+</WLANProfile>''';
+
+        final tempDir = Directory.systemTemp;
+        final tempFile = File('${tempDir.path}/wifi_profile_$ssid.xml');
+        await tempFile.writeAsString(profileXml);
+
+        await Process.run(
+          'netsh',
+          ['wlan', 'add', 'profile', 'filename=${tempFile.path}'],
+        );
+
+        await tempFile.delete();
+
+        // Try connecting again
+        await Process.run(
+          'netsh',
+          ['wlan', 'connect', 'name=$ssid'],
+        );
+      }
+
+      // Wait for connection to establish
+      await Future.delayed(const Duration(seconds: 4));
+
+      // Check if connected to the network
+      final currentSSID = await getCurrentSSID();
+      if (currentSSID != ssid) {
+        return false;
+      }
+
+      // Check if we have internet access
+      final hasInternet = await checkInternet();
+      return hasInternet;
+    } catch (e) {
+      return false;
     }
   }
 
@@ -186,82 +307,6 @@ class WiFiService {
 </WLANProfile>''';
 
     return await _addProfileAndConnect(ssid, profileXml);
-  }
-
-  Future<bool> _connectEnterprise(String ssid, String username, String password) async {
-    final profileXml = '''<?xml version="1.0"?>
-<WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">
-  <name>$ssid</name>
-  <SSIDConfig>
-    <SSID>
-      <name>$ssid</name>
-    </SSID>
-  </SSIDConfig>
-  <connectionType>ESS</connectionType>
-  <connectionMode>auto</connectionMode>
-  <MSM>
-    <security>
-      <authEncryption>
-        <authentication>WPA2</authentication>
-        <encryption>AES</encryption>
-        <useOneX>true</useOneX>
-      </authEncryption>
-      <OneX xmlns="http://www.microsoft.com/networking/OneX/v1">
-        <cacheUserData>true</cacheUserData>
-        <authMode>user</authMode>
-        <EAPConfig>
-          <EapHostConfig xmlns="http://www.microsoft.com/provisioning/EapHostConfig">
-            <EapMethod>
-              <Type xmlns="http://www.microsoft.com/provisioning/EapCommon">25</Type>
-              <VendorId xmlns="http://www.microsoft.com/provisioning/EapCommon">0</VendorId>
-              <VendorType xmlns="http://www.microsoft.com/provisioning/EapCommon">0</VendorType>
-              <AuthorId xmlns="http://www.microsoft.com/provisioning/EapCommon">0</AuthorId>
-            </EapMethod>
-            <Config xmlns="http://www.microsoft.com/provisioning/EapHostConfig">
-              <Eap xmlns="http://www.microsoft.com/provisioning/BaseEapConnectionPropertiesV1">
-                <Type>25</Type>
-                <EapType xmlns="http://www.microsoft.com/provisioning/MsPeapConnectionPropertiesV1">
-                  <ServerValidation>
-                    <DisableUserPromptForServerValidation>true</DisableUserPromptForServerValidation>
-                    <ServerNames></ServerNames>
-                  </ServerValidation>
-                  <FastReconnect>true</FastReconnect>
-                  <InnerEapOptional>false</InnerEapOptional>
-                  <Eap xmlns="http://www.microsoft.com/provisioning/BaseEapConnectionPropertiesV1">
-                    <Type>26</Type>
-                    <EapType xmlns="http://www.microsoft.com/provisioning/MsChapV2ConnectionPropertiesV1">
-                      <UseWinLogonCredentials>false</UseWinLogonCredentials>
-                    </EapType>
-                  </Eap>
-                  <EnableQuarantineChecks>false</EnableQuarantineChecks>
-                  <RequireCryptoBinding>false</RequireCryptoBinding>
-                </EapType>
-              </Eap>
-            </Config>
-          </EapHostConfig>
-        </EAPConfig>
-      </OneX>
-    </security>
-  </MSM>
-</WLANProfile>''';
-
-    final added = await _addProfileAndConnect(ssid, profileXml);
-    if (!added) return false;
-
-    return await _setEnterpriseCredentials(ssid, username, password);
-  }
-
-  Future<bool> _setEnterpriseCredentials(String ssid, String username, String password) async {
-    try {
-      final result = await Process.run(
-        'cmdkey',
-        ['/add:$ssid', '/user:$username', '/pass:$password'],
-        runInShell: true,
-      );
-      return result.exitCode == 0;
-    } catch (e) {
-      return false;
-    }
   }
 
   Future<bool> _addProfileAndConnect(String ssid, String profileXml) async {
@@ -402,8 +447,20 @@ class WiFiService {
     return buffer.toString();
   }
 
-  Future<void> disconnect() async {
-    await Process.run('netsh', ['wlan', 'disconnect']);
+  Future<bool> disconnect() async {
+    try {
+      final result = await Process.run('netsh', ['wlan', 'disconnect']);
+      if (result.exitCode != 0) return false;
+      
+      // Wait a moment for disconnection to complete
+      await Future.delayed(const Duration(seconds: 1));
+      
+      // Verify disconnection
+      final currentSSID = await getCurrentSSID();
+      return currentSSID == null || currentSSID.isEmpty;
+    } catch (e) {
+      return false;
+    }
   }
 
   Future<bool> checkInternet() async {

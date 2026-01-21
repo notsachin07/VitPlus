@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../theme/app_theme.dart';
 
 class Sidebar extends StatelessWidget {
@@ -84,14 +85,25 @@ class Sidebar extends StatelessWidget {
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.favorite, color: AppTheme.errorRed, size: 16),
+                  const Icon(Icons.star, color: AppTheme.accentGold, size: 16),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text(
-                      'Made with love',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: isDark ? Colors.white54 : Colors.black45,
+                    child: GestureDetector(
+                      onTap: () async {
+                        final uri = Uri.parse('https://github.com/notsachin07/VitPlus');
+                        if (await canLaunchUrl(uri)) {
+                          await launchUrl(uri);
+                        }
+                      },
+                      child: MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: Text(
+                          'Star my repo on GitHub',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: isDark ? Colors.white54 : Colors.black45,
+                          ),
+                        ),
                       ),
                     ),
                   ),
