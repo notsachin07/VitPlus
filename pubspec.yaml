@@ -1,0 +1,33 @@
+name: vitplus
+description: VIT-AP WiFi Auto-Login and File Sharing App
+publish_to: 'none'
+version: 2.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  
+  window_manager: ^0.3.7
+  system_tray: ^2.0.3
+  shared_preferences: ^2.2.2
+  path_provider: ^2.1.1
+  file_picker: ^6.1.1
+  http: ^1.1.0
+  process_run: ^0.14.2
+  flutter_riverpod: ^2.4.9
+  collection: ^1.18.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+
+flutter:
+  uses-material-design: true
+  
+  assets:
+    - assets/
+    - assets/icons/
