@@ -86,7 +86,7 @@ flutter build windows --release
 ---
 
 ## 📸 Screenshots
-![screenshot](./screenshots/homepage.svg)
+![screenshot](./screenshots/homepage.png)
 
 
 ---
