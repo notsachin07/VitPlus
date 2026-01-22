@@ -1,7 +1,7 @@
 name: vitplus
 description: VIT-AP WiFi Auto-Login and File Sharing App
 publish_to: 'none'
-version: 2.0.0+1
+version: 2.1.0+2
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
