@@ -6,7 +6,7 @@ import 'package:path_provider/path_provider.dart';
 class UpdateService {
   static const String githubOwner = 'notsachin07';
   static const String githubRepo = 'VitPlus';
-  static const String currentVersion = '2.0.0'; // Update this with each release
+  static const String currentVersion = '2.1.1'; // Update this with each release
   
   static String get releasesApiUrl =>
       'https://api.github.com/repos/$githubOwner/$githubRepo/releases/latest';
@@ -136,20 +136,27 @@ class UpdateService {
     final tempDir = await getTemporaryDirectory();
     final scriptPath = '${tempDir.path}\\update_vitplus.bat';
     
+    // Use proper Windows path escaping (backslashes)
+    final zipPathWin = zipPath.replaceAll('/', '\\');
+    final appDirWin = appDir.replaceAll('/', '\\');
+    final exePathWin = exePath.replaceAll('/', '\\');
+    
     final script = '''
 @echo off
 echo Updating VitPlus...
-timeout /t 2 /nobreak > nul
+echo Please wait...
+timeout /t 3 /nobreak > nul
 
-:: Extract update
-powershell -Command "Expand-Archive -Path '$zipPath' -DestinationPath '$appDir' -Force"
+echo Extracting update...
+powershell -Command "Expand-Archive -Path '$zipPathWin' -DestinationPath '$appDirWin' -Force"
 
-:: Clean up
-del "$zipPath"
-del "%~f0"
+echo Cleaning up...
+if exist "$zipPathWin" del "$zipPathWin"
 
-:: Restart app
-start "" "$exePath"
+echo Starting VitPlus...
+start "" "$exePathWin"
+
+exit
 ''';
 
     final scriptFile = File(scriptPath);
@@ -158,7 +165,7 @@ start "" "$exePath"
     // Start the update script and exit current app
     await Process.start(
       'cmd',
-      ['/c', 'start', '/min', scriptPath],
+      ['/c', scriptPath],
       mode: ProcessStartMode.detached,
     );
     

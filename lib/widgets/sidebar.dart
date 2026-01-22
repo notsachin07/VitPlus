@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import '../theme/app_theme.dart';
 import '../services/update_service.dart';
 
@@ -425,15 +426,16 @@ class _UpdateDialogState extends State<_UpdateDialog> {
                 color: Colors.grey[100],
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: SingleChildScrollView(
-                child: Text(
-                  widget.updateInfo.releaseNotes.isEmpty
-                      ? 'No release notes available.'
-                      : widget.updateInfo.releaseNotes,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: Colors.grey[700],
-                  ),
+              child: Markdown(
+                data: widget.updateInfo.releaseNotes.isEmpty
+                    ? 'No release notes available.'
+                    : widget.updateInfo.releaseNotes,
+                shrinkWrap: true,
+                padding: EdgeInsets.zero,
+                styleSheet: MarkdownStyleSheet(
+                  p: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                  h2: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.grey[800]),
+                  listBullet: TextStyle(fontSize: 13, color: Colors.grey[700]),
                 ),
               ),
             ),
