@@ -1,6 +1,69 @@
 import 'dart:io';
 import 'dart:convert';
 import 'dart:math';
+import 'dart:async';
+
+/// Represents an active download with progress tracking
+class ActiveDownload {
+  final String fileName;
+  final String clientIp;
+  final int totalBytes;
+  int downloadedBytes;
+  final DateTime startTime;
+  bool isComplete;
+
+  ActiveDownload({
+    required this.fileName,
+    required this.clientIp,
+    required this.totalBytes,
+    this.downloadedBytes = 0,
+    required this.startTime,
+    this.isComplete = false,
+  });
+
+  double get progress => totalBytes > 0 ? downloadedBytes / totalBytes : 0;
+  
+  int get bytesPerSecond {
+    final elapsed = DateTime.now().difference(startTime).inSeconds;
+    if (elapsed == 0) return 0;
+    return downloadedBytes ~/ elapsed;
+  }
+
+  Duration get estimatedTimeRemaining {
+    if (bytesPerSecond == 0) return Duration.zero;
+    final remainingBytes = totalBytes - downloadedBytes;
+    return Duration(seconds: remainingBytes ~/ bytesPerSecond);
+  }
+
+  String get formattedProgress {
+    return '${(progress * 100).toStringAsFixed(1)}%';
+  }
+
+  String get formattedSpeed {
+    return _formatBytes(bytesPerSecond) + '/s';
+  }
+
+  String get formattedETA {
+    final eta = estimatedTimeRemaining;
+    if (eta.inHours > 0) {
+      return '${eta.inHours}h ${eta.inMinutes.remainder(60)}m';
+    } else if (eta.inMinutes > 0) {
+      return '${eta.inMinutes}m ${eta.inSeconds.remainder(60)}s';
+    } else {
+      return '${eta.inSeconds}s';
+    }
+  }
+
+  static String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+  }
+
+  String get formattedDownloaded => _formatBytes(downloadedBytes);
+  String get formattedTotal => _formatBytes(totalBytes);
+}
 
 class VitShareService {
   HttpServer? _server;
@@ -9,11 +72,17 @@ class VitShareService {
   int _port = 5000;
   bool _isRunning = false;
   final Set<String> _authenticatedSessions = {};
+  
+  // Active downloads tracking
+  final Map<String, ActiveDownload> _activeDownloads = {};
+  final _downloadController = StreamController<Map<String, ActiveDownload>>.broadcast();
 
   bool get isRunning => _isRunning;
   int get port => _port;
   String get password => _password;
   List<String> get sharedPaths => List.unmodifiable(_sharedPaths);
+  Map<String, ActiveDownload> get activeDownloads => Map.unmodifiable(_activeDownloads);
+  Stream<Map<String, ActiveDownload>> get downloadStream => _downloadController.stream;
 
   String generatePassword({int length = 4}) {
     const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -80,6 +149,14 @@ class VitShareService {
     }
     _isRunning = false;
     _authenticatedSessions.clear();
+    _activeDownloads.clear();
+    _notifyDownloadUpdate();
+  }
+
+  void _notifyDownloadUpdate() {
+    if (!_downloadController.isClosed) {
+      _downloadController.add(Map.from(_activeDownloads));
+    }
   }
 
   void _handleRequest(HttpRequest request) async {
@@ -209,11 +286,57 @@ class VitShareService {
     }
 
     final filename = file.uri.pathSegments.last;
+    final fileSize = await file.length();
+    final clientIp = request.connectionInfo?.remoteAddress.address ?? 'Unknown';
+    final downloadId = '${clientIp}_${filename}_${DateTime.now().millisecondsSinceEpoch}';
+
+    // Create active download entry
+    _activeDownloads[downloadId] = ActiveDownload(
+      fileName: filename,
+      clientIp: clientIp,
+      totalBytes: fileSize,
+      startTime: DateTime.now(),
+    );
+    _notifyDownloadUpdate();
+
     request.response.headers.set('Content-Disposition', 'attachment; filename="$filename"');
     request.response.headers.contentType = ContentType.binary;
-    request.response.headers.contentLength = await file.length();
+    request.response.headers.contentLength = fileSize;
 
-    await file.openRead().pipe(request.response);
+    try {
+      // Stream the file with progress tracking
+      final fileStream = file.openRead();
+      await for (final chunk in fileStream) {
+        request.response.add(chunk);
+        
+        // Update progress
+        if (_activeDownloads.containsKey(downloadId)) {
+          _activeDownloads[downloadId]!.downloadedBytes += chunk.length;
+          _notifyDownloadUpdate();
+        }
+      }
+      
+      // Mark as complete
+      if (_activeDownloads.containsKey(downloadId)) {
+        _activeDownloads[downloadId]!.isComplete = true;
+        _notifyDownloadUpdate();
+        
+        // Remove after a short delay so user can see completion
+        Future.delayed(const Duration(seconds: 2), () {
+          _activeDownloads.remove(downloadId);
+          _notifyDownloadUpdate();
+        });
+      }
+      
+      await request.response.close();
+    } catch (e) {
+      // Download was interrupted
+      _activeDownloads.remove(downloadId);
+      _notifyDownloadUpdate();
+      try {
+        await request.response.close();
+      } catch (_) {}
+    }
   }
 
   String _generateSessionId() {
