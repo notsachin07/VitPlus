@@ -2,7 +2,7 @@
 ; Created for proper Windows installation
 
 #define MyAppName "VitPlus"
-#define MyAppVersion "2.1.1"
+#define MyAppVersion "2.1.2"
 #define MyAppPublisher "VitPlus Team"
 #define MyAppURL "https://github.com/notsachin07/VitPlus"
 #define MyAppExeName "vitplus.exe"

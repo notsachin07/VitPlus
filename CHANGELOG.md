@@ -2,6 +2,23 @@
 
 All notable changes to VitPlus will be documented in this file.
 
+## [2.1.2] - 2026-01-23
+
+### Added
+- **Update Notification Badge**: Visual indicator when new version is available
+  - Red dot on update icon
+  - "NEW" label when update available
+  - Automatic background check on app start
+
+### Improved
+- WiFi connection status now shows correct state on app launch
+- Removed Network Endpoints from settings (internal only)
+
+### Fixed
+- Version display in Settings now updates correctly
+
+---
+
 ## [2.1.1] - 2026-01-23
 
 ### Added

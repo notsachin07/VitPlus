@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import '../theme/app_theme.dart';
 import '../services/update_service.dart';
+import '../providers/update_provider.dart';
 
-class Sidebar extends StatefulWidget {
+class Sidebar extends ConsumerStatefulWidget {
   final int selectedIndex;
   final Function(int) onItemSelected;
 
@@ -15,10 +17,10 @@ class Sidebar extends StatefulWidget {
   });
 
   @override
-  State<Sidebar> createState() => _SidebarState();
+  ConsumerState<Sidebar> createState() => _SidebarState();
 }
 
-class _SidebarState extends State<Sidebar> {
+class _SidebarState extends ConsumerState<Sidebar> {
   bool _isCheckingUpdate = false;
 
   Future<void> _checkForUpdate() async {
@@ -30,6 +32,9 @@ class _SidebarState extends State<Sidebar> {
       
       if (!mounted) return;
       setState(() => _isCheckingUpdate = false);
+      
+      // Clear the notification badge since user clicked
+      ref.read(updateAvailableProvider.notifier).clearUpdateNotification();
       
       if (updateInfo.isUpdateAvailable) {
         _showUpdateDialog(updateInfo);
@@ -193,18 +198,56 @@ class _SidebarState extends State<Sidebar> {
                                 color: AppTheme.primaryBlue,
                               ),
                             )
-                          : Icon(
-                              Icons.system_update,
-                              size: 20,
-                              color: isDark ? Colors.white60 : Colors.black54,
+                          : Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                Icon(
+                                  Icons.system_update,
+                                  size: 20,
+                                  color: isDark ? Colors.white60 : Colors.black54,
+                                ),
+                                // Update available badge
+                                if (ref.watch(updateAvailableProvider).isUpdateAvailable)
+                                  Positioned(
+                                    right: -4,
+                                    top: -4,
+                                    child: Container(
+                                      width: 10,
+                                      height: 10,
+                                      decoration: const BoxDecoration(
+                                        color: AppTheme.errorRed,
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                  ),
+                              ],
                             ),
                       const SizedBox(width: 12),
-                      Text(
-                        _isCheckingUpdate ? 'Checking...' : 'Check for Update',
-                        style: TextStyle(
-                          color: isDark ? Colors.white : Colors.black87,
+                      Expanded(
+                        child: Text(
+                          _isCheckingUpdate ? 'Checking...' : 'Check for Update',
+                          style: TextStyle(
+                            color: isDark ? Colors.white : Colors.black87,
+                          ),
                         ),
                       ),
+                      // New version indicator text
+                      if (ref.watch(updateAvailableProvider).isUpdateAvailable && !_isCheckingUpdate)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: AppTheme.successGreen.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text(
+                            'NEW',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: AppTheme.successGreen,
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),

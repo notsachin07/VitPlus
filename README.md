@@ -27,7 +27,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/notsachin07/VitPlus/releases/latest/download/VitPlus_Setup_2.1.1.exe">
+  <a href="https://github.com/notsachin07/VitPlus/releases/latest/download/VitPlus_Setup_2.1.2.exe">
     <img src="https://img.shields.io/badge/Download-VitPlus_Setup.exe-blue?style=for-the-badge&logo=windows" alt="Download VitPlus"/>
   </a>
 </p>
@@ -60,7 +60,7 @@
 
 ## 🚀 Installation
 
-1. **Download** `VitPlus_Setup_2.1.1.exe` from the link above
+1. **Download** `VitPlus_Setup_2.1.2.exe` from the link above
 2. **Run** the installer
 3. **Follow** the installation wizard
 4. **Launch** VitPlus from Start Menu or Desktop shortcut

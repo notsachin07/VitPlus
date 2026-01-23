@@ -122,27 +122,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
                 const SizedBox(height: 16),
                 _buildSection(
-                  'Network Endpoints',
-                  [
-                    _buildTextFieldTile(
-                      'Campus Endpoint',
-                      _settings['campus_endpoint'] ?? '',
-                      Icons.business,
-                      (value) => _updateSetting('campus_endpoint', value),
-                      isDark,
-                    ),
-                    _buildTextFieldTile(
-                      'Hostel Endpoint',
-                      _settings['hostel_endpoint'] ?? '',
-                      Icons.home,
-                      (value) => _updateSetting('hostel_endpoint', value),
-                      isDark,
-                    ),
-                  ],
-                  isDark,
-                ),
-                const SizedBox(height: 16),
-                _buildSection(
                   'Data',
                   [
                     ListTile(
@@ -180,7 +159,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     const ListTile(
                       leading: Icon(Icons.info_outline),
                       title: Text('VitPlus'),
-                      subtitle: Text('Version 2.0.0'),
+                      subtitle: Text('Version 2.1.2'),
                     ),
                   ],
                   isDark,

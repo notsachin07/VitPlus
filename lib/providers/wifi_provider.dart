@@ -8,7 +8,10 @@ final wifiServiceProvider = Provider<WiFiService>((ref) {
 });
 
 final connectionStatusProvider = StateNotifierProvider<ConnectionStatusNotifier, ConnectionStatus>((ref) {
-  return ConnectionStatusNotifier(ref.read(wifiServiceProvider));
+  final notifier = ConnectionStatusNotifier(ref.read(wifiServiceProvider));
+  // Check initial connection status
+  notifier.checkCurrentStatus();
+  return notifier;
 });
 
 final availableNetworksProvider = FutureProvider<List<WiFiNetwork>>((ref) async {
@@ -25,6 +28,20 @@ class ConnectionStatusNotifier extends StateNotifier<ConnectionStatus> {
   final WiFiService _wifiService;
 
   ConnectionStatusNotifier(this._wifiService) : super(ConnectionStatus.disconnected);
+
+  /// Check if already connected to WiFi on app start
+  Future<void> checkCurrentStatus() async {
+    try {
+      final currentSSID = await _wifiService.getCurrentSSID();
+      if (currentSSID != null && currentSSID.isNotEmpty) {
+        state = ConnectionStatus.connected;
+      } else {
+        state = ConnectionStatus.disconnected;
+      }
+    } catch (e) {
+      state = ConnectionStatus.disconnected;
+    }
+  }
 
   /// Returns ConnectionResult to allow UI to show appropriate message
   Future<ConnectionResult> connect(String ssid, String username, String password) async {
