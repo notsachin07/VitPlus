@@ -22,11 +22,19 @@
 
 ---
 
-## 📥 Download
+<p align="center">
+  <h2 align="center">📥 Download</h2>
+</p>
 
-### [⬇️ Download VitPlus Setup (Windows)](https://github.com/notsachin07/VitPlus/releases/latest/download/VitPlus_Setup_2.1.1.exe)
+<p align="center">
+  <a href="https://github.com/notsachin07/VitPlus/releases/latest/download/VitPlus_Setup_2.1.1.exe">
+    <img src="https://img.shields.io/badge/Download-VitPlus_Setup.exe-blue?style=for-the-badge&logo=windows" alt="Download VitPlus"/>
+  </a>
+</p>
 
-Or visit the [Releases Page](https://github.com/notsachin07/VitPlus/releases) to see all versions.
+<p align="center">
+  Or visit the <a href="https://github.com/notsachin07/VitPlus/releases">Releases Page</a> to see all versions.
+</p>
 
 ---
 
