@@ -355,6 +355,7 @@ class _UpdateDialogState extends State<_UpdateDialog> {
             setState(() => _downloadProgress = progress);
           }
         },
+        installerUrl: widget.updateInfo.installerUrl,
       );
     } catch (e) {
       if (mounted) {

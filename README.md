@@ -24,7 +24,7 @@
 
 ## 📥 Download
 
-### [⬇️ Download Latest Release (Windows)](https://github.com/notsachin07/VitPlus/releases/latest/download/VitPlus-Windows.zip)
+### [⬇️ Download VitPlus Setup (Windows)](https://github.com/notsachin07/VitPlus/releases/latest/download/VitPlus_Setup_2.1.1.exe)
 
 Or visit the [Releases Page](https://github.com/notsachin07/VitPlus/releases) to see all versions.
 
@@ -39,16 +39,28 @@ Or visit the [Releases Page](https://github.com/notsachin07/VitPlus/releases) to
 - **Auto-reconnect**: Remembers your credentials for quick reconnection
 
 ### 📂 VitShare
-- Local file sharing between devices on the same network
-- No internet required
+- **Share Files**: Host files on your local network for others to download
+- **Receive Files**: Download files from other VitShare servers using URL
+- **Embedded Browser**: Built-in browser for easy file receiving
+- **No Internet Required**: Works entirely on local network
+
+### 🔄 Auto-Update
+- Automatic update checking from GitHub releases
+- Silent background updates
 
 ---
 
 ## 🚀 Installation
 
-1. **Download** the latest release from the link above
-2. **Extract** the ZIP file to any location
-3. **Run** `vitplus.exe`
+1. **Download** `VitPlus_Setup_2.1.1.exe` from the link above
+2. **Run** the installer
+3. **Follow** the installation wizard
+4. **Launch** VitPlus from Start Menu or Desktop shortcut
+
+✅ Appears in Windows "Installed Apps"  
+✅ Creates Start Menu & Desktop shortcuts  
+✅ Optional: Run at Windows startup  
+✅ Easy uninstall via Windows Settings  
 
 > **Note**: On first run, Windows may show a SmartScreen warning. Click "More info" → "Run anyway" to proceed.
 
@@ -67,6 +79,7 @@ Or visit the [Releases Page](https://github.com/notsachin07/VitPlus/releases) to
 ### Prerequisites
 - Flutter SDK (3.0.0 or higher)
 - Windows development dependencies
+- [Inno Setup 6](https://jrsoftware.org/isinfo.php) (for building installer)
 
 ### Steps
 ```bash

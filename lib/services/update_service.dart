@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class UpdateService {
   static const String githubOwner = 'notsachin07';
@@ -13,6 +14,24 @@ class UpdateService {
   
   static String get releasesPageUrl =>
       'https://github.com/$githubOwner/$githubRepo/releases/latest';
+
+  /// Check if app is installed in Program Files (requires admin for updates)
+  bool get isInstalledInProgramFiles {
+    final exePath = Platform.resolvedExecutable.toLowerCase();
+    return exePath.contains('program files') || exePath.contains('programfiles');
+  }
+
+  /// Get the installer download URL from release assets
+  String? _getInstallerDownloadUrl(List assets) {
+    // Prefer installer for Program Files installations
+    for (final asset in assets) {
+      final name = (asset['name'] as String).toLowerCase();
+      if (name.contains('setup') && name.endsWith('.exe')) {
+        return asset['browser_download_url'] as String;
+      }
+    }
+    return null;
+  }
 
   /// Check if a newer version is available on GitHub
   Future<UpdateInfo> checkForUpdate() async {
@@ -27,6 +46,7 @@ class UpdateService {
         final latestVersion = (data['tag_name'] as String).replaceAll('v', '');
         final releaseNotes = data['body'] as String? ?? 'No release notes available';
         final downloadUrl = _getWindowsDownloadUrl(data['assets'] as List);
+        final installerUrl = _getInstallerDownloadUrl(data['assets'] as List);
         
         final isUpdateAvailable = _isNewerVersion(latestVersion, currentVersion);
         
@@ -36,6 +56,7 @@ class UpdateService {
           isUpdateAvailable: isUpdateAvailable,
           releaseNotes: releaseNotes,
           downloadUrl: downloadUrl,
+          installerUrl: installerUrl,
         );
       } else if (response.statusCode == 404) {
         // No releases yet
@@ -45,6 +66,7 @@ class UpdateService {
           isUpdateAvailable: false,
           releaseNotes: '',
           downloadUrl: null,
+          installerUrl: null,
         );
       } else {
         throw Exception('Failed to check for updates: ${response.statusCode}');
@@ -89,14 +111,74 @@ class UpdateService {
   }
 
   /// Download and apply update
+  /// For Program Files installation: downloads installer and runs it
+  /// For portable installation: downloads ZIP and extracts
   Future<void> downloadAndApplyUpdate(
     String downloadUrl,
+    Function(double) onProgress, {
+    String? installerUrl,
+  }) async {
+    try {
+      final tempDir = await getTemporaryDirectory();
+      
+      // If installed in Program Files, use installer for proper update
+      if (isInstalledInProgramFiles && installerUrl != null) {
+        await _downloadAndRunInstaller(installerUrl, tempDir.path, onProgress);
+      } else {
+        // Portable installation - use ZIP extraction
+        await _downloadAndExtractZip(downloadUrl, tempDir.path, onProgress);
+      }
+    } catch (e) {
+      throw Exception('Failed to download update: $e');
+    }
+  }
+
+  /// Download installer and run it (for Program Files installations)
+  Future<void> _downloadAndRunInstaller(
+    String installerUrl,
+    String tempPath,
     Function(double) onProgress,
   ) async {
-    try {
-      // Get temp directory for download
-      final tempDir = await getTemporaryDirectory();
-      final downloadPath = '${tempDir.path}\\VitPlus_update.zip';
+    final downloadPath = '$tempPath\\VitPlus_Setup.exe';
+    
+    // Download the installer
+    final request = http.Request('GET', Uri.parse(installerUrl));
+    final response = await http.Client().send(request);
+    
+    final totalBytes = response.contentLength ?? 0;
+    int receivedBytes = 0;
+    
+    final file = File(downloadPath);
+    final sink = file.openWrite();
+    
+    await for (final chunk in response.stream) {
+      sink.add(chunk);
+      receivedBytes += chunk.length;
+      if (totalBytes > 0) {
+        onProgress(receivedBytes / totalBytes);
+      }
+    }
+    
+    await sink.close();
+    
+    // Run the installer silently and exit the app
+    await Process.start(
+      downloadPath,
+      ['/SILENT', '/CLOSEAPPLICATIONS'],
+      mode: ProcessStartMode.detached,
+    );
+    
+    // Exit the current app so installer can update
+    exit(0);
+  }
+
+  /// Download ZIP and extract (for portable installations)
+  Future<void> _downloadAndExtractZip(
+    String downloadUrl,
+    String tempPath,
+    Function(double) onProgress,
+  ) async {
+      final downloadPath = '$tempPath\\VitPlus_update.zip';
       
       // Download the update
       final request = http.Request('GET', Uri.parse(downloadUrl));
@@ -123,10 +205,6 @@ class UpdateService {
       // 2. Extract new files
       // 3. Restart app
       await _createUpdateScript(downloadPath);
-      
-    } catch (e) {
-      throw Exception('Failed to download update: $e');
-    }
   }
 
   /// Create a batch script to apply the update after app closes
@@ -180,6 +258,7 @@ class UpdateInfo {
   final bool isUpdateAvailable;
   final String releaseNotes;
   final String? downloadUrl;
+  final String? installerUrl;
 
   UpdateInfo({
     required this.currentVersion,
@@ -187,5 +266,6 @@ class UpdateInfo {
     required this.isUpdateAvailable,
     required this.releaseNotes,
     this.downloadUrl,
+    this.installerUrl,
   });
 }
