@@ -195,148 +195,187 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     );
   }
 
+  void _showAttendanceDetail(BuildContext context, AttendanceCourse course, bool isDark) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => AttendanceDetailSheet(
+        course: course,
+        isDark: isDark,
+      ),
+    );
+  }
+
   Widget _buildCourseCard(bool isDark, AttendanceCourse course) {
     final color = _getPercentageColor(course.percentage);
     final isLow = course.percentage < 75;
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: isDark ? AppTheme.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: isLow
-            ? Border.all(color: AppTheme.errorRed.withOpacity(0.5), width: 1.5)
-            : null,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
+    return GestureDetector(
+      onTap: () => _showAttendanceDetail(context, course, isDark),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        decoration: BoxDecoration(
+          color: isDark ? AppTheme.darkCard : Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: isLow
+              ? Border.all(color: AppTheme.errorRed.withOpacity(0.5), width: 1.5)
+              : null,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => _showAttendanceDetail(context, course, isDark),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: AppTheme.primaryBlue.withOpacity(0.15),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              course.courseCode,
-                              style: const TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: AppTheme.primaryBlue,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          if (course.courseType.isNotEmpty)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: isDark ? Colors.white12 : Colors.black.withOpacity(0.05),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                course.courseType,
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: isDark ? Colors.white54 : Colors.black45,
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 4,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: AppTheme.primaryBlue.withOpacity(0.15),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    course.courseCode,
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                      color: AppTheme.primaryBlue,
+                                    ),
+                                  ),
                                 ),
-                              ),
+                                if (course.courseType.isNotEmpty)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: isDark ? Colors.white12 : Colors.black.withOpacity(0.05),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      course.courseType,
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        color: isDark ? Colors.white54 : Colors.black45,
+                                      ),
+                                    ),
+                                  ),
+                              ],
                             ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        course.courseName,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: isDark ? Colors.white : Colors.black87,
+                            const SizedBox(height: 8),
+                            Text(
+                              course.courseName,
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: isDark ? Colors.white : Colors.black87,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
                         ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
                       ),
+                      const SizedBox(width: 12),
+                      _buildPercentageIndicator(course.percentage, color),
                     ],
                   ),
-                ),
-                const SizedBox(width: 16),
-                _buildPercentageIndicator(course.percentage, color),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                _buildStatItem(
-                  'Present',
-                  '${course.attendedClasses}',
-                  AppTheme.successGreen,
-                  isDark,
-                ),
-                const SizedBox(width: 16),
-                _buildStatItem(
-                  'Absent',
-                  '${course.absentClasses}',
-                  AppTheme.errorRed,
-                  isDark,
-                ),
-                const SizedBox(width: 16),
-                _buildStatItem(
-                  'Total',
-                  '${course.totalClasses}',
-                  AppTheme.primaryBlue,
-                  isDark,
-                ),
-                const Spacer(),
-                if (isLow)
-                  _buildClassesNeeded(course, isDark),
-              ],
-            ),
-            if (course.faculty.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Icon(
-                    Icons.person_outline,
-                    size: 14,
-                    color: isDark ? Colors.white54 : Colors.black45,
-                  ),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      course.faculty,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: isDark ? Colors.white54 : Colors.black45,
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 16,
+                    runSpacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      _buildStatItem(
+                        'Present',
+                        '${course.attendedClasses}',
+                        AppTheme.successGreen,
+                        isDark,
                       ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                      _buildStatItem(
+                        'Absent',
+                        '${course.absentClasses}',
+                        AppTheme.errorRed,
+                        isDark,
+                      ),
+                      _buildStatItem(
+                        'Total',
+                        '${course.totalClasses}',
+                        AppTheme.primaryBlue,
+                        isDark,
+                      ),
+                      if (isLow)
+                        _buildClassesNeeded(course, isDark),
+                    ],
                   ),
+                  if (course.faculty.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.person_outline,
+                          size: 14,
+                          color: isDark ? Colors.white54 : Colors.black45,
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            course.faculty,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: isDark ? Colors.white54 : Colors.black45,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Icon(
+                          Icons.chevron_right,
+                          size: 18,
+                          color: isDark ? Colors.white38 : Colors.black26,
+                        ),
+                      ],
+                    ),
+                  ] else ...[
+                    const SizedBox(height: 4),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Icon(
+                        Icons.chevron_right,
+                        size: 18,
+                        color: isDark ? Colors.white38 : Colors.black26,
+                      ),
+                    ),
+                  ],
                 ],
               ),
-            ],
-          ],
+            ),
+          ),
         ),
       ),
     );
@@ -506,5 +545,327 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
         ],
       ),
     );
+  }
+}
+
+/// Bottom sheet to show detailed attendance records for a course
+class AttendanceDetailSheet extends ConsumerStatefulWidget {
+  final AttendanceCourse course;
+  final bool isDark;
+
+  const AttendanceDetailSheet({
+    super.key,
+    required this.course,
+    required this.isDark,
+  });
+
+  @override
+  ConsumerState<AttendanceDetailSheet> createState() => _AttendanceDetailSheetState();
+}
+
+class _AttendanceDetailSheetState extends ConsumerState<AttendanceDetailSheet> {
+  List<AttendanceDetail>? _details;
+  bool _isLoading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDetails();
+  }
+
+  Future<void> _loadDetails() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final details = await ref.read(vtopProvider.notifier).fetchAttendanceDetail(widget.course);
+      setState(() {
+        _details = details;
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _error = e.toString();
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final screenHeight = MediaQuery.of(context).size.height;
+    
+    return Container(
+      height: screenHeight * 0.75,
+      decoration: BoxDecoration(
+        color: widget.isDark ? AppTheme.darkCard : Colors.white,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(
+        children: [
+          _buildHeader(),
+          _buildSummary(),
+          Expanded(child: _buildContent()),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(
+            color: widget.isDark ? Colors.white12 : Colors.black12,
+          ),
+        ),
+      ),
+      child: Column(
+        children: [
+          Container(
+            width: 40,
+            height: 4,
+            margin: const EdgeInsets.only(bottom: 16),
+            decoration: BoxDecoration(
+              color: widget.isDark ? Colors.white24 : Colors.black26,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.course.courseCode,
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: widget.isDark ? Colors.white : Colors.black87,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      widget.course.courseName,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: widget.isDark ? Colors.white70 : Colors.black54,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                onPressed: () => Navigator.pop(context),
+                icon: Icon(
+                  Icons.close,
+                  color: widget.isDark ? Colors.white70 : Colors.black54,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSummary() {
+    final percentage = widget.course.percentage;
+    final color = _getPercentageColor(percentage);
+
+    return Container(
+      margin: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          _buildSummaryItem('Present', '${widget.course.attendedClasses}', AppTheme.successGreen),
+          _buildSummaryItem('Absent', '${widget.course.absentClasses}', AppTheme.errorRed),
+          _buildSummaryItem('Total', '${widget.course.totalClasses}', AppTheme.primaryBlue),
+          _buildSummaryItem('Percentage', '${percentage.toStringAsFixed(1)}%', color),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSummaryItem(String label, String value, Color color) {
+    return Column(
+      children: [
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: color,
+          ),
+        ),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: widget.isDark ? Colors.white54 : Colors.black45,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildContent() {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_error != null) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.error_outline,
+              size: 48,
+              color: AppTheme.errorRed.withOpacity(0.6),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Failed to load details',
+              style: TextStyle(
+                fontSize: 16,
+                color: widget.isDark ? Colors.white70 : Colors.black54,
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextButton.icon(
+              onPressed: _loadDetails,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_details == null || _details!.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.event_note,
+              size: 48,
+              color: widget.isDark ? Colors.white38 : Colors.black26,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'No attendance records found',
+              style: TextStyle(
+                fontSize: 16,
+                color: widget.isDark ? Colors.white70 : Colors.black54,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      itemCount: _details!.length,
+      itemBuilder: (context, index) {
+        final detail = _details![index];
+        return _buildDetailRow(detail, index);
+      },
+    );
+  }
+
+  Widget _buildDetailRow(AttendanceDetail detail, int index) {
+    final isPresent = detail.status.toLowerCase().contains('present');
+    final statusColor = isPresent ? AppTheme.successGreen : AppTheme.errorRed;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: widget.isDark 
+            ? Colors.white.withOpacity(0.05) 
+            : Colors.grey.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(8),
+        border: Border(
+          left: BorderSide(
+            color: statusColor,
+            width: 3,
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 30,
+            child: Text(
+              detail.serial,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: widget.isDark ? Colors.white54 : Colors.black45,
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 2,
+            child: Text(
+              detail.date,
+              style: TextStyle(
+                fontSize: 14,
+                color: widget.isDark ? Colors.white : Colors.black87,
+              ),
+            ),
+          ),
+          if (detail.dayTime.isNotEmpty)
+            Expanded(
+              flex: 2,
+              child: Text(
+                detail.dayTime,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: widget.isDark ? Colors.white70 : Colors.black54,
+                ),
+              ),
+            ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: statusColor.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              detail.status,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: statusColor,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color _getPercentageColor(double percentage) {
+    if (percentage >= 85) return AppTheme.successGreen;
+    if (percentage >= 75) return AppTheme.primaryBlue;
+    if (percentage >= 65) return AppTheme.warningOrange;
+    return AppTheme.errorRed;
   }
 }

@@ -276,6 +276,29 @@ class VtopNotifier extends StateNotifier<VtopState> {
     }
   }
 
+  /// Fetch detailed attendance for a specific course
+  Future<List<AttendanceDetail>> fetchAttendanceDetail(AttendanceCourse course) async {
+    if (!_vtopService.isAuthenticated) {
+      final loggedIn = await login();
+      if (!loggedIn) return [];
+    }
+
+    final semesterId = state.selectedSemesterId;
+    if (semesterId == null) {
+      throw Exception('No semester selected');
+    }
+
+    try {
+      return await _vtopService.fetchAttendanceDetail(
+        semesterId: semesterId,
+        courseId: course.courseId,
+        courseType: course.courseType,
+      );
+    } catch (e) {
+      throw Exception('Failed to fetch attendance detail: $e');
+    }
+  }
+
   /// Fetch marks
   Future<void> fetchMarks() async {
     if (!_vtopService.isAuthenticated) {

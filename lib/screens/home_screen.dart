@@ -15,7 +15,7 @@ import 'marks_screen.dart';
 import 'exam_schedule_screen.dart';
 import 'vtop_screen.dart';
 
-final selectedNavProvider = StateProvider<int>((ref) => 0);
+final selectedNavProvider = StateProvider<int>((ref) => 2); // Default to Timetable
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});

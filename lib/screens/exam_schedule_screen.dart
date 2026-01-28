@@ -105,35 +105,26 @@ class _ExamScheduleScreenState extends ConsumerState<ExamScheduleScreen> {
       return _buildEmptyState(isDark);
     }
 
-    final exams = vtopState.examSchedule!.exams;
-    if (exams.isEmpty) {
+    final examGroups = vtopState.examSchedule!.examGroups;
+    if (examGroups.isEmpty) {
       return _buildNoExamsState(isDark);
-    }
-
-    // Group exams by exam type (CAT1, CAT2, FAT)
-    final groupedExams = <String, List<ExamSlot>>{};
-    for (final exam in exams) {
-      final type = exam.examType.isNotEmpty ? exam.examType : 'Other';
-      groupedExams.putIfAbsent(type, () => []).add(exam);
-    }
-
-    // Sort exams within each group by date
-    for (final group in groupedExams.values) {
-      group.sort((a, b) => a.date.compareTo(b.date));
     }
 
     return ListView.builder(
       padding: const EdgeInsets.all(16),
-      itemCount: groupedExams.length,
+      itemCount: examGroups.length,
       itemBuilder: (context, index) {
-        final examType = groupedExams.keys.elementAt(index);
-        final examList = groupedExams[examType]!;
-        return _buildExamTypeSection(isDark, examType, examList);
+        final group = examGroups[index];
+        return _buildExamTypeSection(isDark, group.examType, group.exams);
       },
     );
   }
 
   Widget _buildExamTypeSection(bool isDark, String examType, List<ExamSlot> exams) {
+    // Sort exams by date
+    final sortedExams = List<ExamSlot>.from(exams);
+    sortedExams.sort((a, b) => a.examDate.compareTo(b.examDate));
+    
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -167,15 +158,15 @@ class _ExamScheduleScreenState extends ConsumerState<ExamScheduleScreen> {
             ],
           ),
         ),
-        ...exams.map((exam) => _buildExamCard(isDark, exam)),
+        ...sortedExams.map((exam) => _buildExamCard(isDark, exam, examType)),
         const SizedBox(height: 16),
       ],
     );
   }
 
-  Widget _buildExamCard(bool isDark, ExamSlot exam) {
-    final isUpcoming = _isUpcomingExam(exam.date);
-    final isPast = _isPastExam(exam.date);
+  Widget _buildExamCard(bool isDark, ExamSlot exam, String examType) {
+    final isUpcoming = _isUpcomingExam(exam.examDate);
+    final isPast = _isPastExam(exam.examDate);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -207,29 +198,29 @@ class _ExamScheduleScreenState extends ConsumerState<ExamScheduleScreen> {
                   decoration: BoxDecoration(
                     color: isPast
                         ? (isDark ? Colors.white12 : Colors.black.withOpacity(0.05))
-                        : _getExamTypeColor(exam.examType).withOpacity(0.15),
+                        : _getExamTypeColor(examType).withOpacity(0.15),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Column(
                     children: [
                       Text(
-                        _getDayOfMonth(exam.date),
+                        _getDayOfMonth(exam.examDate),
                         style: TextStyle(
                           fontSize: 22,
                           fontWeight: FontWeight.bold,
                           color: isPast
                               ? (isDark ? Colors.white38 : Colors.black38)
-                              : _getExamTypeColor(exam.examType),
+                              : _getExamTypeColor(examType),
                         ),
                       ),
                       Text(
-                        _getMonth(exam.date),
+                        _getMonth(exam.examDate),
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
                           color: isPast
                               ? (isDark ? Colors.white38 : Colors.black38)
-                              : _getExamTypeColor(exam.examType),
+                              : _getExamTypeColor(examType),
                         ),
                       ),
                     ],
@@ -310,7 +301,7 @@ class _ExamScheduleScreenState extends ConsumerState<ExamScheduleScreen> {
                           ),
                           const SizedBox(width: 4),
                           Text(
-                            exam.time.isNotEmpty ? exam.time : 'TBA',
+                            exam.examTime.isNotEmpty ? exam.examTime : 'TBA',
                             style: TextStyle(
                               fontSize: 12,
                               color: isPast

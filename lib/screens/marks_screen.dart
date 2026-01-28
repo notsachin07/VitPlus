@@ -239,8 +239,13 @@ class _MarksScreenState extends ConsumerState<MarksScreen> {
   }
 
   Widget _buildComponentRow(bool isDark, MarkComponent component) {
-    final percentage = component.maxMarks > 0
-        ? (component.scoredMarks / component.maxMarks) * 100
+    final maxMarks = component.maxMarksDouble;
+    final scoredMarks = component.scoredMarksDouble;
+    final weightedScore = component.weightedScoreDouble;
+    final weightage = component.weightageDouble;
+    
+    final percentage = maxMarks > 0
+        ? (scoredMarks / maxMarks) * 100
         : 0.0;
 
     return Padding(
@@ -263,7 +268,7 @@ class _MarksScreenState extends ConsumerState<MarksScreen> {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(
-                  '${component.scoredMarks.toStringAsFixed(1)} / ${component.maxMarks.toStringAsFixed(0)}',
+                  '${scoredMarks.toStringAsFixed(1)} / ${maxMarks.toStringAsFixed(0)}',
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w500,
@@ -292,15 +297,15 @@ class _MarksScreenState extends ConsumerState<MarksScreen> {
           SizedBox(
             width: 50,
             child: Text(
-              component.weightedScore > 0
-                  ? '${component.weightedScore.toStringAsFixed(1)}'
+              weightedScore > 0
+                  ? weightedScore.toStringAsFixed(1)
                   : '-',
               textAlign: TextAlign.end,
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w500,
-                color: _getScoreColor(component.weightedScore > 0 
-                    ? (component.weightedScore / component.weightage) * 100 
+                color: _getScoreColor(weightedScore > 0 && weightage > 0
+                    ? (weightedScore / weightage) * 100 
                     : percentage),
               ),
             ),

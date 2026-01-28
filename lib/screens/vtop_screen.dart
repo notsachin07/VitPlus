@@ -94,6 +94,7 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
   }
 
   Future<void> _tryAutoLogin() async {
+    if (!mounted) return;
     setState(() {
       _isAutoLoggingIn = true;
       _statusMessage = 'Checking credentials...';
@@ -103,6 +104,7 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
       // First check if we have credentials
       final creds = await _storage.getVtopCredentials();
       if (creds == null || creds['username']?.isEmpty == true || creds['password']?.isEmpty == true) {
+        if (!mounted) return;
         setState(() {
           _isAutoLoggingIn = false;
           _statusMessage = 'No credentials saved. Please add in Settings.';
@@ -115,22 +117,28 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
       final session = await _storage.getVtopSession();
       
       if (session != null && session['cookie'] != null && session['cookie']!.isNotEmpty) {
+        if (!mounted) return;
         setState(() => _statusMessage = 'Found saved session, attempting to use...');
         
         // First load the VTOP domain to set cookies properly
         await _webviewController.loadUrl(vtopBase);
         await Future.delayed(const Duration(milliseconds: 500));
         
+        if (!mounted) return;
+        
         // Inject cookies into webview
         final cookie = session['cookie']!;
         await _injectCookies(cookie);
         
         // Navigate to VTOP content page
+        if (!mounted) return;
         setState(() => _statusMessage = 'Loading VTOP...');
         await _webviewController.loadUrl(vtopContent);
         
         // Wait and check if we're still logged in
         await Future.delayed(const Duration(seconds: 3));
+        
+        if (!mounted) return;
         
         // If redirected to login, session is invalid, try fresh login
         if (_currentUrl.contains('/vtop/login') || _currentUrl.contains('/vtop/open/page') ||
@@ -145,6 +153,7 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
       }
     } catch (e) {
       debugPrint('Auto-login error: $e');
+      if (!mounted) return;
       setState(() {
         _isAutoLoggingIn = false;
         _statusMessage = 'Auto-login failed: $e';
@@ -171,10 +180,13 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
   }
 
   Future<void> _performFreshLogin() async {
+    if (!mounted) return;
+    
     try {
       // Get credentials
       final creds = await _storage.getVtopCredentials();
       if (creds == null || creds['username']?.isEmpty == true) {
+        if (!mounted) return;
         setState(() {
           _isAutoLoggingIn = false;
           _statusMessage = 'No credentials saved. Please add in Settings.';
@@ -183,10 +195,13 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
         return;
       }
 
+      if (!mounted) return;
       setState(() => _statusMessage = 'Logging in (solving captcha)...');
 
       // Use the provider to login (which handles captcha solving)
       final success = await ref.read(vtopProvider.notifier).login();
+      
+      if (!mounted) return;
       
       if (success) {
         // Get the new session and inject cookies
@@ -196,13 +211,17 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
           await _webviewController.loadUrl(vtopBase);
           await Future.delayed(const Duration(milliseconds: 500));
           
+          if (!mounted) return;
+          
           // Inject cookies
           await _injectCookies(newSession['cookie']!);
         }
         
+        if (!mounted) return;
         setState(() => _statusMessage = 'Login successful! Loading VTOP...');
         await _webviewController.loadUrl(vtopContent);
       } else {
+        if (!mounted) return;
         setState(() {
           _isAutoLoggingIn = false;
           _statusMessage = 'Login failed. Please check credentials.';
@@ -210,9 +229,11 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
         await _webviewController.loadUrl(vtopLogin);
       }
       
+      if (!mounted) return;
       setState(() => _isAutoLoggingIn = false);
     } catch (e) {
       debugPrint('Fresh login error: $e');
+      if (!mounted) return;
       setState(() {
         _isAutoLoggingIn = false;
         _statusMessage = 'Login error: $e';

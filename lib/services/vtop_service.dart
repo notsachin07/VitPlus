@@ -585,6 +585,15 @@ class VtopService {
       
       print('VtopService: Timetable response - Status: ${response.statusCode}, Body length: ${response.body.length}');
       
+      // Debug: Save raw HTML to inspect structure
+      try {
+        final debugFile = File('C:\\Users\\Yonro\\Desktop\\timetable_debug.html');
+        await debugFile.writeAsString(response.body);
+        print('VtopService: DEBUG - Saved timetable HTML to ${debugFile.path}');
+      } catch (e) {
+        print('VtopService: DEBUG - Could not save debug file: $e');
+      }
+      
       if (response.statusCode != 200 || response.body.contains('login')) {
         _isAuthenticated = false;
         throw Exception('Session expired');
@@ -626,6 +635,40 @@ class VtopService {
       );
     } catch (e) {
       throw Exception('Error fetching attendance: $e');
+    }
+  }
+  
+  /// Fetch detailed attendance for a specific course
+  /// Uses courseId and courseType from the attendance course onclick function
+  Future<List<AttendanceDetail>> fetchAttendanceDetail({
+    required String semesterId,
+    required String courseId,
+    required String courseType,
+  }) async {
+    if (!_isAuthenticated) {
+      throw Exception('Not authenticated');
+    }
+    
+    try {
+      // Endpoint from vitap-mate: /vtop/processViewAttendanceDetail
+      final body = '_csrf=$_csrfToken'
+          '&semesterSubId=$semesterId'
+          '&courseId=$courseId'
+          '&courseType=$courseType'
+          '&authorizedID=$_authorizedId';
+      
+      final response = await _doPost('$baseUrl/vtop/processViewAttendanceDetail', body);
+      
+      print('VtopService: Attendance detail response - Status: ${response.statusCode}, Body length: ${response.body.length}');
+      
+      if (response.statusCode != 200 || response.body.contains('login')) {
+        _isAuthenticated = false;
+        throw Exception('Session expired');
+      }
+      
+      return _parseAttendanceDetail(response.body);
+    } catch (e) {
+      throw Exception('Error fetching attendance detail: $e');
     }
   }
   
@@ -706,10 +749,10 @@ class VtopService {
         throw Exception('Session expired');
       }
       
-      final exams = _parseExamSchedule(response.body);
+      final examGroups = _parseExamSchedule(response.body);
       return ExamScheduleData(
         semesterId: semesterId,
-        exams: exams,
+        examGroups: examGroups,
         fetchedAt: DateTime.now(),
       );
     } catch (e) {
@@ -846,85 +889,209 @@ class VtopService {
     return semesters;
   }
   
+  /// Normalize day names to full format (Monday, Tuesday, etc.)
+  String _normalizeDay(String day) {
+    final upper = day.toUpperCase().trim();
+    if (upper.startsWith('MON')) return 'Monday';
+    if (upper.startsWith('TUE')) return 'Tuesday';
+    if (upper.startsWith('WED')) return 'Wednesday';
+    if (upper.startsWith('THU')) return 'Thursday';
+    if (upper.startsWith('FRI')) return 'Friday';
+    if (upper.startsWith('SAT')) return 'Saturday';
+    if (upper.startsWith('SUN')) return 'Sunday';
+    return day; // Return as-is if not recognized
+  }
+  
   List<TimetableSlot> _parseTimetable(String html) {
     final slots = <TimetableSlot>[];
     
-    // Parse timetable table rows
-    final rowPattern = RegExp(r'<tr[^>]*>(.*?)</tr>', dotAll: true);
-    final cellPattern = RegExp(r'<td[^>]*>(.*?)</td>', dotAll: true);
+    // Debug: Check what tags exist in the HTML
+    final hasTable = html.toLowerCase().contains('<table');
+    final hasTbody = html.toLowerCase().contains('<tbody');
+    final hasTr = html.toLowerCase().contains('<tr');
+    print('VtopService: HTML contains - table: $hasTable, tbody: $hasTbody, tr: $hasTr');
     
-    final rows = rowPattern.allMatches(html);
-    final days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    final tablePattern = RegExp(r'<table[^>]*>(.*?)</table>', dotAll: true, caseSensitive: false);
+    final tables = tablePattern.allMatches(html).toList();
+    print('VtopService: Found ${tables.length} tables in response');
     
-    int dayIndex = 0;
-    for (final row in rows) {
-      final cells = cellPattern.allMatches(row.group(1) ?? '').toList();
+    // Build course info maps by finding the course registration table first
+    final courseNames = <String, String>{};
+    final facultyNames = <String, String>{};
+    
+    // Look for course info in a table that has course codes like CHY1009, CSE2005, etc.
+    for (final t in tables) {
+      final content = t.group(0) ?? '';
+      // Course table has course codes and names like "CHY1009 - Chemistry"
+      final coursePattern = RegExp(r'([A-Z]{3}\d{4})\s*-\s*([^<]+)', caseSensitive: false);
+      for (final match in coursePattern.allMatches(content)) {
+        final code = match.group(1)?.trim() ?? '';
+        final name = match.group(2)?.trim().split('(').first.trim() ?? '';
+        if (code.isNotEmpty && name.isNotEmpty && !courseNames.containsKey(code)) {
+          courseNames[code] = name;
+        }
+      }
+    }
+    print('VtopService: Extracted ${courseNames.length} course names: ${courseNames.keys.join(", ")}');
+    
+    // Now find the timetable grid table (contains day names)
+    String tableHtml = '';
+    for (final t in tables) {
+      final content = t.group(0) ?? '';
+      // The timetable grid table contains day names like MON, TUE, THU
+      if (content.contains('>MON<') || content.contains('>TUE<') || 
+          content.contains('>WED<') || content.contains('>THU<') ||
+          content.contains('>FRI<') || content.contains('>SAT<') ||
+          // Also check with td prefix
+          RegExp(r'<td[^>]*>\s*MON\s*</td>|<td[^>]*>\s*TUE\s*</td>|<td[^>]*>\s*WED\s*</td>|<td[^>]*>\s*THU\s*</td>|<td[^>]*>\s*FRI\s*</td>', caseSensitive: false).hasMatch(content)) {
+        tableHtml = content;
+        print('VtopService: Found timetable grid table with ${tableHtml.length} chars');
+        break;
+      }
+    }
+    
+    if (tableHtml.isEmpty) {
+      print('VtopService: Could not find timetable grid table');
+      return slots;
+    }
+    
+    final rowPattern = RegExp(r'<tr[^>]*>(.*?)</tr>', dotAll: true, caseSensitive: false);
+    final cellPattern = RegExp(r'<td[^>]*>(.*?)</td>', dotAll: true, caseSensitive: false);
+    
+    // Parse all rows directly from the timetable grid table
+    final allRows = rowPattern.allMatches(tableHtml).map((m) => m.group(1) ?? '').toList();
+    print('VtopService: Found ${allRows.length} rows in timetable grid');
+    
+    // Debug: print first few rows
+    for (int i = 0; i < allRows.length.clamp(0, 5); i++) {
+      final cells = cellPattern.allMatches(allRows[i]).toList();
+      final preview = cells.take(4).map((c) => _stripHtml(c.group(1) ?? '').replaceAll('\n', ' ').trim()).take(4).join(' | ');
+      print('VtopService: Row $i (${cells.length} cells): $preview');
+    }
+    
+    // Parse timetable rows
+    String currentDay = '';
+    bool isLabRow = false;
+    final days = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+    
+    for (int rowIdx = 0; rowIdx < allRows.length; rowIdx++) {
+      final rowContent = allRows[rowIdx];
+      var cells = cellPattern.allMatches(rowContent).toList();
       if (cells.isEmpty) continue;
       
-      // Check if first cell is a day
-      final firstCell = _stripHtml(cells[0].group(1) ?? '');
-      final dayMatch = days.indexWhere((d) => firstCell.contains(d));
-      if (dayMatch >= 0) {
-        dayIndex = dayMatch;
+      // First few cells might contain: Day name, THEORY/LAB indicator
+      int dataStartIdx = 0;
+      for (int i = 0; i < cells.length.clamp(0, 3); i++) {
+        final cellText = _stripHtml(cells[i].group(1) ?? '').replaceAll('\t', ' ').replaceAll('\n', ' ').trim().toUpperCase();
+        
+        if (days.any((d) => cellText == d)) {
+          currentDay = _normalizeDay(cellText);
+          dataStartIdx = i + 1;
+          continue;
+        }
+        if (cellText == 'THEORY') {
+          isLabRow = false;
+          dataStartIdx = i + 1;
+          continue;
+        }
+        if (cellText == 'LAB') {
+          isLabRow = true;
+          dataStartIdx = i + 1;
+          continue;
+        }
       }
       
-      // Parse slot information from cells
-      for (final cell in cells) {
-        final content = cell.group(1) ?? '';
-        if (content.contains('courseName') || content.contains('slot')) {
-          final slotInfo = _parseSlotCell(content, days[dayIndex % days.length]);
-          if (slotInfo != null) {
-            slots.add(slotInfo);
+      // Skip header rows (THEORY Start/End, LAB Start/End)
+      final firstCellText = _stripHtml(cells.first.group(1) ?? '').toUpperCase().trim();
+      if (firstCellText == 'START' || firstCellText == 'END' || 
+          firstCellText.contains('THEORY') && (allRows[rowIdx].contains('Start') || allRows[rowIdx].contains('End'))) {
+        continue;
+      }
+      
+      // Process remaining cells for slot data
+      for (int i = dataStartIdx; i < cells.length; i++) {
+        final cellContent = _stripHtml(cells[i].group(1) ?? '').replaceAll('\t', ' ').replaceAll('\n', ' ').trim();
+        
+        // Skip empty or placeholder cells
+        if (cellContent.isEmpty || cellContent == '-' || cellContent == '--' || cellContent == 'Lunch') {
+          continue;
+        }
+        
+        // Look for slot patterns: SLOT-CODE-TYPE-ROOM-BLOCK-...
+        // e.g., "L11-CSE2005-ELA-309-AB-1-ALL" or "D1-CSE2005-ETH-101-AB-1-ALL"
+        if (cellContent.contains('-')) {
+          final parts = cellContent.split('-').where((p) => p.trim().isNotEmpty).toList();
+          if (parts.length >= 4) {
+            final slotName = parts[0].trim();
+            final code = parts[1].trim();
+            var courseType = parts[2].trim().toUpperCase();
+            final room = parts[3].trim();
+            final block = parts.length > 4 ? parts[4].trim() : '';
+            
+            // Normalize course type
+            if (courseType == 'ETH' || courseType == 'TH') courseType = 'Theory';
+            if (courseType == 'ELA' || courseType == 'LA') courseType = 'Lab';
+            
+            final slotIsLab = isLabRow || courseType == 'Lab' || slotName.contains('+') || slotName.startsWith('L');
+            
+            slots.add(TimetableSlot(
+              day: currentDay.isNotEmpty ? currentDay : 'Unknown',
+              slotName: slotName,
+              courseCode: code,
+              courseName: courseNames[code] ?? '',
+              courseType: courseType,
+              venue: room,
+              block: block,
+              startTime: '',
+              endTime: '',
+              isLab: slotIsLab,
+              faculty: facultyNames[code] ?? '',
+              serial: slots.length,
+            ));
           }
         }
       }
     }
     
+    print('VtopService: Parsed ${slots.length} timetable slots');
+    for (final day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']) {
+      final daySlots = slots.where((s) => s.day == day).length;
+      print('VtopService: $day: $daySlots slots');
+    }
+    
     return slots;
-  }
-  
-  TimetableSlot? _parseSlotCell(String cell, String day) {
-    // Extract course info from cell HTML
-    final codePattern = RegExp(r'([A-Z]{3}\d{3,4})');
-    final codeMatch = codePattern.firstMatch(cell);
-    
-    if (codeMatch == null) return null;
-    
-    final text = _stripHtml(cell);
-    final lines = text.split(RegExp(r'\s{2,}|\n')).where((l) => l.trim().isNotEmpty).toList();
-    
-    return TimetableSlot(
-      day: day,
-      startTime: '',
-      endTime: '',
-      courseCode: codeMatch.group(1) ?? '',
-      courseName: lines.length > 1 ? lines[1] : '',
-      venue: lines.length > 2 ? lines[2] : '',
-      faculty: lines.length > 3 ? lines[3] : '',
-      slotName: lines.isNotEmpty ? lines[0] : '',
-    );
   }
   
   List<AttendanceCourse> _parseAttendance(String html) {
     final courses = <AttendanceCourse>[];
     
     // Parse attendance table - matching reference parser
-    // Reference: cells order is serial, category, course_name, course_code, faculty_detail, 
-    // classes_attended, total_classes, attendance_percentage, attendence_fat_cat, debar_status
+    // Reference: The last cell contains onclick with courseId and courseType
     final rowPattern = RegExp(r'<tr[^>]*>(.*?)</tr>', dotAll: true);
     final cellPattern = RegExp(r'<td[^>]*>(.*?)</td>', dotAll: true);
     
     final rows = rowPattern.allMatches(html).skip(1).toList(); // Skip header row
     
     for (final row in rows) {
-      final cells = cellPattern.allMatches(row.group(1) ?? '').toList();
+      final rowHtml = row.group(1) ?? '';
+      final cells = cellPattern.allMatches(rowHtml).toList();
       
       // Reference checks cells.len() > 9 (at least 10 cells)
       if (cells.length < 9) continue;
       
       try {
+        // Extract courseId and courseType from the last cell's onclick
+        // Format: onclick="...,'courseId','courseType')"
+        String courseId = '';
+        String courseType = '';
+        final lastCellHtml = cells.last.group(0) ?? '';
+        final onclickMatch = RegExp(r"'([^']+)'\s*,\s*'([^']+)'\s*\)").firstMatch(lastCellHtml);
+        if (onclickMatch != null) {
+          courseId = onclickMatch.group(1) ?? '';
+          courseType = onclickMatch.group(2) ?? '';
+        }
+        
         // Extract cell values
-        final serial = _stripHtml(cells[0].group(1) ?? '').trim();
         final category = _stripHtml(cells[1].group(1) ?? '').trim();
         final courseName = _stripHtml(cells[2].group(1) ?? '').trim();
         final courseCode = _stripHtml(cells[3].group(1) ?? '').trim();
@@ -932,6 +1099,7 @@ class VtopService {
         final attendedStr = _stripHtml(cells[5].group(1) ?? '').trim();
         final totalStr = _stripHtml(cells[6].group(1) ?? '').trim();
         final percentStr = _stripHtml(cells[7].group(1) ?? '').trim();
+        final debarStatus = cells.length > 9 ? _stripHtml(cells[9].group(1) ?? '').trim() : '';
         
         // Skip if course code doesn't look like a course code
         if (courseCode.isEmpty || !RegExp(r'[A-Z]{2,4}\d{3,4}').hasMatch(courseCode)) {
@@ -945,13 +1113,16 @@ class VtopService {
         courses.add(AttendanceCourse(
           courseCode: courseCode,
           courseName: courseName,
-          courseType: category,
+          courseType: courseType.isNotEmpty ? courseType : category,
           faculty: faculty,
           slot: '',
           totalClasses: total,
           attendedClasses: attended,
           absentClasses: total - attended,
           percentage: percent,
+          courseId: courseId,
+          category: category,
+          debarStatus: debarStatus,
         ));
       } catch (_) {
         continue;
@@ -963,119 +1134,187 @@ class VtopService {
     return courses;
   }
   
-  List<CourseMarks> _parseMarks(String html) {
-    final courses = <CourseMarks>[];
+  /// Parse detailed attendance records for a course
+  /// Based on vitap-mate: parseattn.rs parse_full_attendance
+  /// Columns: serial(0), date(1), slot(2), day_time(3), status(4), remark(5)
+  List<AttendanceDetail> _parseAttendanceDetail(String html) {
+    final details = <AttendanceDetail>[];
     
-    // Parse marks tables
-    final tablePattern = RegExp(r'<table[^>]*class="[^"]*table[^"]*"[^>]*>(.*?)</table>', dotAll: true);
     final rowPattern = RegExp(r'<tr[^>]*>(.*?)</tr>', dotAll: true);
     final cellPattern = RegExp(r'<td[^>]*>(.*?)</td>', dotAll: true);
     
-    final tables = tablePattern.allMatches(html);
+    // Skip first 3 rows as per vitap-mate (headers)
+    final rows = rowPattern.allMatches(html).skip(3).toList();
     
-    for (final table in tables) {
-      final rows = rowPattern.allMatches(table.group(1) ?? '').toList();
-      if (rows.length < 2) continue;
+    print('VtopService: Attendance detail - found ${rows.length} rows after skipping headers');
+    
+    for (final row in rows) {
+      final rowHtml = row.group(1) ?? '';
+      final cells = cellPattern.allMatches(rowHtml).toList();
       
-      String? currentCourse;
-      String? currentCourseName;
-      String? currentCourseType;
-      List<MarkComponent> components = [];
-      
-      for (final row in rows) {
-        final cells = cellPattern.allMatches(row.group(1) ?? '').toList();
-        if (cells.isEmpty) continue;
-        
-        final firstCell = _stripHtml(cells[0].group(1) ?? '').trim();
-        
-        // Check if this is a course header row
-        if (RegExp(r'[A-Z]{3}\d{3,4}').hasMatch(firstCell)) {
-          // Save previous course if exists
-          if (currentCourse != null && components.isNotEmpty) {
-            courses.add(CourseMarks(
-              courseCode: currentCourse,
-              courseName: currentCourseName ?? '',
-              courseType: currentCourseType ?? '',
-              components: components,
-              totalWeightedScore: components.fold(0.0, (sum, c) => sum + c.weightedScore),
-            ));
-          }
-          
-          currentCourse = firstCell;
-          currentCourseName = cells.length > 1 ? _stripHtml(cells[1].group(1) ?? '').trim() : '';
-          currentCourseType = cells.length > 2 ? _stripHtml(cells[2].group(1) ?? '').trim() : '';
-          components = [];
-        } else if (currentCourse != null && cells.length >= 4) {
-          // This is a component row
-          try {
-            final name = firstCell;
-            final maxMarks = double.tryParse(_stripHtml(cells[1].group(1) ?? '').trim()) ?? 0.0;
-            final scored = double.tryParse(_stripHtml(cells[2].group(1) ?? '').trim()) ?? 0.0;
-            final weightage = cells.length > 3 
-                ? (double.tryParse(_stripHtml(cells[3].group(1) ?? '').trim()) ?? 0.0) 
-                : 0.0;
-            final weighted = cells.length > 4 
-                ? (double.tryParse(_stripHtml(cells[4].group(1) ?? '').trim()) ?? 0.0) 
-                : (maxMarks > 0 ? (scored / maxMarks) * weightage : 0.0);
-            
-            if (name.isNotEmpty) {
-              components.add(MarkComponent(
-                name: name,
-                maxMarks: maxMarks,
-                scoredMarks: scored,
-                weightage: weightage,
-                weightedScore: weighted,
-              ));
-            }
-          } catch (_) {
-            continue;
-          }
-        }
+      // Need at least 5 cells as per vitap-mate (cells.len() > 5 means >= 6)
+      if (cells.length < 5) {
+        continue;
       }
       
-      // Add last course
-      if (currentCourse != null && components.isNotEmpty) {
-        courses.add(CourseMarks(
-          courseCode: currentCourse,
-          courseName: currentCourseName ?? '',
-          courseType: currentCourseType ?? '',
-          components: components,
-          totalWeightedScore: components.fold(0.0, (sum, c) => sum + c.weightedScore),
+      try {
+        final serial = _stripHtml(cells[0].group(1) ?? '').trim();
+        final date = _stripHtml(cells[1].group(1) ?? '').trim();
+        final slot = _stripHtml(cells[2].group(1) ?? '').trim();
+        final dayTime = _stripHtml(cells[3].group(1) ?? '').trim();
+        final status = _stripHtml(cells[4].group(1) ?? '').trim();
+        final remark = cells.length > 5 ? _stripHtml(cells[5].group(1) ?? '').trim() : '';
+        
+        // Skip if serial is not numeric (probably header row)
+        if (int.tryParse(serial) == null) continue;
+        
+        details.add(AttendanceDetail(
+          serial: serial,
+          date: date,
+          slot: slot,
+          dayTime: dayTime,
+          status: status,
+          remark: remark,
         ));
+      } catch (e) {
+        print('VtopService: Error parsing attendance detail row: $e');
+        continue;
       }
     }
+    
+    print('VtopService: Parsed ${details.length} attendance detail records');
+    
+    return details;
+  }
+  
+  List<CourseMarks> _parseMarks(String html) {
+    final courses = <CourseMarks>[];
+    
+    // Parse marks based on vitap-mate reference
+    // Rows alternate: course header (tr.tableContent) then marks detail (tr.tableContent with nested tr.tableContent-level1)
+    final rowPattern = RegExp(r'<tr[^>]*class="[^"]*tableContent[^"]*"[^>]*>(.*?)</tr>', dotAll: true);
+    final cellPattern = RegExp(r'<td[^>]*>(.*?)</td>', dotAll: true);
+    final nestedRowPattern = RegExp(r'<tr[^>]*class="[^"]*tableContent-level1[^"]*"[^>]*>(.*?)</tr>', dotAll: true);
+    
+    final rows = rowPattern.allMatches(html).toList();
+    
+    CourseMarks? currentCourse;
+    bool expectingMarks = false;
+    
+    for (final row in rows) {
+      final rowHtml = row.group(1) ?? '';
+      final cells = cellPattern.allMatches(rowHtml).toList();
+      
+      if (expectingMarks) {
+        // This row contains the marks table
+        final nestedRows = nestedRowPattern.allMatches(rowHtml).toList();
+        final components = <MarkComponent>[];
+        
+        for (final nestedRow in nestedRows) {
+          final nestedCells = cellPattern.allMatches(nestedRow.group(1) ?? '').toList();
+          if (nestedCells.length >= 7) {
+            components.add(MarkComponent(
+              serial: _stripHtml(nestedCells[0].group(1) ?? '').trim(),
+              name: _stripHtml(nestedCells[1].group(1) ?? '').trim(),
+              maxMarks: _stripHtml(nestedCells[2].group(1) ?? '').trim(),
+              weightage: _stripHtml(nestedCells[3].group(1) ?? '').trim(),
+              status: _stripHtml(nestedCells[4].group(1) ?? '').trim(),
+              scoredMarks: _stripHtml(nestedCells[5].group(1) ?? '').trim(),
+              weightedScore: _stripHtml(nestedCells[6].group(1) ?? '').trim(),
+              remark: nestedCells.length > 7 ? _stripHtml(nestedCells[7].group(1) ?? '').trim() : '',
+            ));
+          }
+        }
+        
+        if (currentCourse != null) {
+          courses.add(CourseMarks(
+            serial: currentCourse.serial,
+            courseCode: currentCourse.courseCode,
+            courseName: currentCourse.courseName,
+            courseType: currentCourse.courseType,
+            faculty: currentCourse.faculty,
+            slot: currentCourse.slot,
+            components: components,
+          ));
+        }
+        
+        expectingMarks = false;
+        currentCourse = null;
+      } else if (cells.length >= 8) {
+        // This is a course header row
+        // Cells: serial, ?, courseCode, courseTitle, courseType, ?, faculty, slot
+        currentCourse = CourseMarks(
+          serial: _stripHtml(cells[0].group(1) ?? '').trim(),
+          courseCode: _stripHtml(cells[2].group(1) ?? '').trim(),
+          courseName: _stripHtml(cells[3].group(1) ?? '').trim(),
+          courseType: _stripHtml(cells[4].group(1) ?? '').trim(),
+          faculty: _stripHtml(cells[6].group(1) ?? '').trim(),
+          slot: _stripHtml(cells[7].group(1) ?? '').trim(),
+          components: [],
+        );
+        expectingMarks = true;
+      }
+    }
+    
+    print('VtopService: Parsed ${courses.length} marks courses');
     
     return courses;
   }
   
-  List<ExamSlot> _parseExamSchedule(String html) {
-    final exams = <ExamSlot>[];
+  List<ExamTypeGroup> _parseExamSchedule(String html) {
+    final examGroups = <ExamTypeGroup>[];
     
-    // Parse exam schedule table
+    // Parse exam schedule based on vitap-mate reference
+    // Structure: rows with < 3 cells are exam type headers, rows with > 12 cells are exam records
     final rowPattern = RegExp(r'<tr[^>]*>(.*?)</tr>', dotAll: true);
     final cellPattern = RegExp(r'<td[^>]*>(.*?)</td>', dotAll: true);
     
-    final rows = rowPattern.allMatches(html).toList();
+    final rows = rowPattern.allMatches(html).skip(2).toList(); // Skip first 2 header rows
+    
+    ExamTypeGroup? currentGroup;
     
     for (final row in rows) {
       final cells = cellPattern.allMatches(row.group(1) ?? '').toList();
-      if (cells.length < 6) continue;
       
-      final courseCode = _stripHtml(cells[0].group(1) ?? '').trim();
-      if (!RegExp(r'[A-Z]{3}\d{3,4}').hasMatch(courseCode)) continue;
-      
-      exams.add(ExamSlot(
-        courseCode: courseCode,
-        courseName: _stripHtml(cells[1].group(1) ?? '').trim(),
-        examType: _stripHtml(cells[2].group(1) ?? '').trim(),
-        date: _stripHtml(cells[3].group(1) ?? '').trim(),
-        time: _stripHtml(cells[4].group(1) ?? '').trim(),
-        venue: cells.length > 5 ? _stripHtml(cells[5].group(1) ?? '').trim() : '',
-        seatNo: cells.length > 6 ? _stripHtml(cells[6].group(1) ?? '').trim() : '',
-      ));
+      if (cells.length < 3) {
+        // This is an exam type header
+        final examType = _stripHtml(cells[0].group(1) ?? '').trim();
+        if (examType.isNotEmpty) {
+          if (currentGroup != null) {
+            examGroups.add(currentGroup);
+          }
+          currentGroup = ExamTypeGroup(examType: examType, exams: []);
+        }
+      } else if (cells.length > 12 && currentGroup != null) {
+        // This is an exam record
+        // Cells: serial, courseCode, courseName, courseType, courseId, slot, examDate, examSession, reportingTime, examTime, venue, seatLocation, seatNo
+        final exam = ExamSlot(
+          serial: _stripHtml(cells[0].group(1) ?? '').trim(),
+          courseCode: _stripHtml(cells[1].group(1) ?? '').trim(),
+          courseName: _stripHtml(cells[2].group(1) ?? '').trim(),
+          courseType: _stripHtml(cells[3].group(1) ?? '').trim(),
+          courseId: _stripHtml(cells[4].group(1) ?? '').trim(),
+          slot: _stripHtml(cells[5].group(1) ?? '').trim(),
+          examDate: _stripHtml(cells[6].group(1) ?? '').trim(),
+          examSession: _stripHtml(cells[7].group(1) ?? '').trim(),
+          reportingTime: _stripHtml(cells[8].group(1) ?? '').trim(),
+          examTime: _stripHtml(cells[9].group(1) ?? '').trim(),
+          venue: _stripHtml(cells[10].group(1) ?? '').trim(),
+          seatLocation: _stripHtml(cells[11].group(1) ?? '').trim(),
+          seatNo: _stripHtml(cells[12].group(1) ?? '').trim(),
+        );
+        currentGroup.exams.add(exam);
+      }
     }
     
-    return exams;
+    // Add last group
+    if (currentGroup != null) {
+      examGroups.add(currentGroup);
+    }
+    
+    print('VtopService: Parsed ${examGroups.length} exam groups');
+    
+    return examGroups;
   }
   
   String _stripHtml(String html) {
