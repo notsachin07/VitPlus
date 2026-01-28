@@ -116,6 +116,7 @@ class AttendanceCourse {
   final int attendedClasses;
   final int absentClasses;
   final double percentage;
+  final String fatCatPercentage;  // Between exams percentage
   final String courseId;  // For fetching detailed attendance
   final String category;
   final String debarStatus;
@@ -130,6 +131,7 @@ class AttendanceCourse {
     required this.attendedClasses,
     required this.absentClasses,
     required this.percentage,
+    this.fatCatPercentage = '',
     this.courseId = '',
     this.category = '',
     this.debarStatus = '',
@@ -146,6 +148,7 @@ class AttendanceCourse {
       attendedClasses: map['attendedClasses'] ?? 0,
       absentClasses: map['absentClasses'] ?? 0,
       percentage: (map['percentage'] ?? 0.0).toDouble(),
+      fatCatPercentage: map['fatCatPercentage'] ?? '',
       courseId: map['courseId'] ?? '',
       category: map['category'] ?? '',
       debarStatus: map['debarStatus'] ?? '',
@@ -162,10 +165,16 @@ class AttendanceCourse {
     'attendedClasses': attendedClasses,
     'absentClasses': absentClasses,
     'percentage': percentage,
+    'fatCatPercentage': fatCatPercentage,
     'courseId': courseId,
     'category': category,
     'debarStatus': debarStatus,
   };
+  
+  /// Check if this is a lab course
+  bool get isLab => courseType.toLowerCase().contains('lo') || 
+                    courseType.toLowerCase().contains('lab') ||
+                    category.toLowerCase().contains('lab');
 }
 
 class AttendanceDetail {
