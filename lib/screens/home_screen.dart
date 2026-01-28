@@ -9,6 +9,11 @@ import '../widgets/title_bar.dart';
 import 'wifi_screen.dart';
 import 'vitshare_screen.dart';
 import 'settings_screen.dart';
+import 'timetable_screen.dart';
+import 'attendance_screen.dart';
+import 'marks_screen.dart';
+import 'exam_schedule_screen.dart';
+import 'vtop_screen.dart';
 
 final selectedNavProvider = StateProvider<int>((ref) => 0);
 
@@ -72,6 +77,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WindowListener {
       case 1:
         return const VitShareScreen();
       case 2:
+        return const TimetableScreen();
+      case 3:
+        return const AttendanceScreen();
+      case 4:
+        return const MarksScreen();
+      case 5:
+        return const ExamScheduleScreen();
+      case 6:
+        return const VtopScreen();
+      case 7:
         return const SettingsScreen();
       default:
         return const WiFiScreen();

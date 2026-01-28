@@ -153,26 +153,93 @@ class _SidebarState extends ConsumerState<Sidebar> {
               ],
             ),
           ),
-          const SizedBox(height: 32),
-          _NavItem(
-            icon: Icons.wifi,
-            label: 'WiFi Connect',
-            isSelected: widget.selectedIndex == 0,
-            onTap: () => widget.onItemSelected(0),
+          const SizedBox(height: 16),
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  _NavItem(
+                    icon: Icons.wifi,
+                    label: 'WiFi Connect',
+                    isSelected: widget.selectedIndex == 0,
+                    onTap: () => widget.onItemSelected(0),
+                  ),
+                  _NavItem(
+                    icon: Icons.folder_shared,
+                    label: 'VitShare',
+                    isSelected: widget.selectedIndex == 1,
+                    onTap: () => widget.onItemSelected(1),
+                  ),
+                  const SizedBox(height: 8),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Divider(
+                      color: isDark ? Colors.white12 : Colors.black12,
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    child: Text(
+                      'VTOP',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 1,
+                        color: isDark ? Colors.white38 : Colors.black38,
+                      ),
+                    ),
+                  ),
+                  _NavItem(
+                    icon: Icons.schedule,
+                    label: 'Time Table',
+                    isSelected: widget.selectedIndex == 2,
+                    onTap: () => widget.onItemSelected(2),
+                  ),
+                  _NavItem(
+                    icon: Icons.checklist,
+                    label: 'Attendance',
+                    isSelected: widget.selectedIndex == 3,
+                    onTap: () => widget.onItemSelected(3),
+                  ),
+                  _ExpandableNavItem(
+                    icon: Icons.more_horiz,
+                    label: 'More',
+                    isExpanded: widget.selectedIndex >= 4 && widget.selectedIndex <= 6,
+                    children: [
+                      _SubNavItem(
+                        label: 'Marks',
+                        isSelected: widget.selectedIndex == 4,
+                        onTap: () => widget.onItemSelected(4),
+                      ),
+                      _SubNavItem(
+                        label: 'Exam Schedule',
+                        isSelected: widget.selectedIndex == 5,
+                        onTap: () => widget.onItemSelected(5),
+                      ),
+                      _SubNavItem(
+                        label: 'VTOP',
+                        isSelected: widget.selectedIndex == 6,
+                        onTap: () => widget.onItemSelected(6),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Divider(
+                      color: isDark ? Colors.white12 : Colors.black12,
+                    ),
+                  ),
+                  _NavItem(
+                    icon: Icons.settings,
+                    label: 'Settings',
+                    isSelected: widget.selectedIndex == 7,
+                    onTap: () => widget.onItemSelected(7),
+                  ),
+                ],
+              ),
+            ),
           ),
-          _NavItem(
-            icon: Icons.folder_shared,
-            label: 'VitShare',
-            isSelected: widget.selectedIndex == 1,
-            onTap: () => widget.onItemSelected(1),
-          ),
-          _NavItem(
-            icon: Icons.settings,
-            label: 'Settings',
-            isSelected: widget.selectedIndex == 2,
-            onTap: () => widget.onItemSelected(2),
-          ),
-          const Spacer(),
           // Check for Update button
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -350,6 +417,174 @@ class _NavItem extends StatelessWidget {
                     color: isSelected
                         ? AppTheme.primaryBlue
                         : (isDark ? Colors.white : Colors.black87),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ExpandableNavItem extends StatefulWidget {
+  final IconData icon;
+  final String label;
+  final bool isExpanded;
+  final List<Widget> children;
+
+  const _ExpandableNavItem({
+    required this.icon,
+    required this.label,
+    required this.isExpanded,
+    required this.children,
+  });
+
+  @override
+  State<_ExpandableNavItem> createState() => _ExpandableNavItemState();
+}
+
+class _ExpandableNavItemState extends State<_ExpandableNavItem> {
+  late bool _isExpanded;
+
+  @override
+  void initState() {
+    super.initState();
+    _isExpanded = widget.isExpanded;
+  }
+
+  @override
+  void didUpdateWidget(covariant _ExpandableNavItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isExpanded && !_isExpanded) {
+      setState(() => _isExpanded = true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () => setState(() => _isExpanded = !_isExpanded),
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                decoration: BoxDecoration(
+                  color: widget.isExpanded
+                      ? AppTheme.primaryBlue.withOpacity(0.08)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      widget.icon,
+                      size: 20,
+                      color: widget.isExpanded
+                          ? AppTheme.primaryBlue
+                          : (isDark ? Colors.white60 : Colors.black54),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        widget.label,
+                        style: TextStyle(
+                          fontWeight: widget.isExpanded ? FontWeight.w600 : FontWeight.normal,
+                          color: widget.isExpanded
+                              ? AppTheme.primaryBlue
+                              : (isDark ? Colors.white : Colors.black87),
+                        ),
+                      ),
+                    ),
+                    AnimatedRotation(
+                      turns: _isExpanded ? 0.25 : 0,
+                      duration: const Duration(milliseconds: 200),
+                      child: Icon(
+                        Icons.chevron_right,
+                        size: 18,
+                        color: isDark ? Colors.white38 : Colors.black38,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        AnimatedSize(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeInOut,
+          child: _isExpanded
+              ? Column(children: widget.children)
+              : const SizedBox.shrink(),
+        ),
+      ],
+    );
+  }
+}
+
+class _SubNavItem extends StatelessWidget {
+  final String label;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _SubNavItem({
+    required this.label,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Padding(
+      padding: const EdgeInsets.only(left: 28, right: 12, top: 2, bottom: 2),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: isSelected
+                  ? AppTheme.primaryBlue.withOpacity(0.15)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(8),
+              border: isSelected
+                  ? Border.all(color: AppTheme.primaryBlue.withOpacity(0.3))
+                  : null,
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? AppTheme.primaryBlue
+                        : (isDark ? Colors.white30 : Colors.black26),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                    color: isSelected
+                        ? AppTheme.primaryBlue
+                        : (isDark ? Colors.white70 : Colors.black54),
                   ),
                 ),
               ],

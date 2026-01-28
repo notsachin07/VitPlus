@@ -27,7 +27,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/notsachin07/VitPlus/releases/latest/download/VitPlus_Setup_2.1.2.exe">
+  <a href="https://github.com/notsachin07/VitPlus/releases/latest/download/VitPlus_Setup_2.2.0.exe">
     <img src="https://img.shields.io/badge/Download-VitPlus_Setup.exe-blue?style=for-the-badge&logo=windows" alt="Download VitPlus"/>
   </a>
 </p>
@@ -51,6 +51,15 @@
 - **Receive Files**: Download files from other VitShare servers using URL
 - **Embedded Browser**: Built-in browser for easy file receiving
 - **No Internet Required**: Works entirely on local network
+
+### 📚 VTOP Integration (NEW in v2.2.0!)
+- **Time Table**: View your weekly class schedule
+- **Attendance**: Track attendance with percentage indicators
+- **Marks**: View CAT1, CAT2, and FAT marks for all courses
+- **Exam Schedule**: See upcoming exam dates and venues
+- **Embedded VTOP**: Access VTOP portal directly within the app
+- **Offline Support**: Data is cached locally for offline viewing
+- **Semester Selection**: Switch between semesters in settings
 
 ### 🔄 Auto-Update
 - Automatic update checking from GitHub releases
