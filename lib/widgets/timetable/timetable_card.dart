@@ -249,19 +249,46 @@ class _TimetableCardState extends ConsumerState<TimetableCard>
         ),
         const SizedBox(height: 8),
 
-        // Course Name
+        // Course Name (Title)
         Text(
           widget.slot.courseName.isNotEmpty 
               ? widget.slot.courseName 
               : widget.slot.courseCode,
           style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-            color: isDark ? Colors.white : const Color(0xFF374151),
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: isDark ? Colors.white : const Color(0xFF1F2937),
           ),
-          maxLines: 1,
+          maxLines: 2,
           overflow: TextOverflow.ellipsis,
         ),
+        
+        // Faculty Name
+        if (widget.slot.faculty.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.person_outline,
+                  size: 14,
+                  color: isDark ? Colors.white70 : const Color(0xFF6B7280),
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    _formatFacultyName(widget.slot.faculty),
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: isDark ? Colors.white70 : const Color(0xFF6B7280),
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
         const SizedBox(height: 8),
 
         // Location and Course Code Row
@@ -310,7 +337,7 @@ class _TimetableCardState extends ConsumerState<TimetableCard>
           ],
         ),
 
-        // Expandable Faculty Section
+        // Expandable Course Type Section
         SizeTransition(
           sizeFactor: _animation,
           axisAlignment: -1.0,
@@ -322,8 +349,10 @@ class _TimetableCardState extends ConsumerState<TimetableCard>
                   Expanded(
                     child: _buildDetailChip(
                       isDark,
-                      icon: Icons.person_outline,
-                      text: _formatFacultyName(widget.slot.faculty),
+                      icon: Icons.school_outlined,
+                      text: widget.slot.courseType.isNotEmpty 
+                          ? widget.slot.courseType 
+                          : (widget.slot.isLab ? 'Lab' : 'Theory'),
                       color: isDark ? Colors.white : const Color(0xFF374151),
                       isBold: true,
                     ),

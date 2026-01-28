@@ -269,8 +269,6 @@ class VtopService {
       // Use our redirect-following GET method
       final response = await _doGet('$baseUrl/vtop/open/page');
       
-      print('VtopService: Initial page loaded. Status: ${response.statusCode}, Cookie: $_cookie');
-      
       // Check for errors
       if (response.statusCode >= 400) {
         return _PageResult(success: false, message: 'Server error: ${response.statusCode}');
@@ -279,17 +277,10 @@ class VtopService {
       // Store current page
       _currentPage = response.body;
       
-      print('VtopService: Response body length: ${response.body.length}');
-      
       // Extract CSRF token
       if (!_extractCsrfFromCurrentPage()) {
-        // Debug: print first 500 chars to see what we got
-        final debugLen = response.body.length > 500 ? 500 : response.body.length;
-        print('VtopService: CSRF not found. First 500 chars: ${response.body.substring(0, debugLen)}');
         return _PageResult(success: false, message: 'CSRF token not found in initial page');
       }
-      
-      print('VtopService: CSRF token found: $_csrfToken');
       
       return _PageResult(success: true);
     } catch (e) {
@@ -322,38 +313,25 @@ class VtopService {
         final postBody = '_csrf=$_csrfToken&flag=VTOP';
         final response = await _doPost('$baseUrl/vtop/prelogin/setup', postBody);
         
-        print('VtopService: prelogin/setup response - Status: ${response.statusCode}, Body length: ${response.body.length}');
-        
         if (response.statusCode >= 400) {
           return _PageResult(success: false, message: 'Server error: ${response.statusCode}');
         }
         
         // Check if response contains base64 captcha image
         if (response.body.contains('base64,')) {
-          print('VtopService: Found base64 in response!');
           _currentPage = response.body;
           
           // Extract new CSRF token from this page (the form might have a different one)
           _extractCsrfFromCurrentPage();
-          print('VtopService: CSRF after prelogin: $_csrfToken');
           
           // Extract form action URL and save it
           _loginActionUrl = _extractFormAction(response.body);
-          print('VtopService: Form action URL: $_loginActionUrl');
           
           // Extract captcha data
           if (_extractCaptchaFromCurrentPage()) {
-            print('VtopService: Captcha extracted successfully');
             return _PageResult(success: true, captchaData: _captchaData);
           }
-        } else {
-          // Debug: show what we got
-          final debugLen = response.body.length > 300 ? 300 : response.body.length;
-          print('VtopService: No base64 in response. First 300 chars: ${response.body.substring(0, debugLen)}');
         }
-        
-        // No captcha found, retry
-        print('VtopService: No captcha found, reloading page (attempt ${i + 1}/$maxReloadAttempts)');
       }
       
       return _PageResult(success: false, message: 'Captcha not found after $maxReloadAttempts attempts');
@@ -453,7 +431,6 @@ class VtopService {
       }
       return null;
     } catch (e) {
-      print('VtopService: Captcha solve error: $e');
       return null;
     }
   }
@@ -474,15 +451,11 @@ class VtopService {
           ? (_loginActionUrl!.startsWith('http') ? _loginActionUrl! : '$baseUrl$_loginActionUrl')
           : '$baseUrl/vtop/doLogin';
       
-      print('VtopService: Posting login to: $loginUrl');
-      
       // Build POST body
       final postBody = '_csrf=$_csrfToken&username=$encodedUsername&password=$encodedPassword&captchaStr=$captcha';
       
       // Use our redirect-following POST method
       final response = await _doPost(loginUrl, postBody);
-      
-      print('VtopService: Login response - Status: ${response.statusCode}, Body length: ${response.body.length}');
       
       // First check for success indicators - if we see these, login worked!
       final hasAuthorizedId = response.body.contains('authorizedID') || response.body.contains('authorizedIDX');
@@ -491,8 +464,6 @@ class VtopService {
                                 response.body.contains('vtop/content') ||
                                 response.body.contains('Academics') ||
                                 response.body.contains('Time Table');
-      
-      print('VtopService: Success indicators - authorizedID: $hasAuthorizedId, studentContent: $hasStudentContent');
       
       if (hasAuthorizedId || hasStudentContent) {
         // Success - extract new CSRF and authorized ID
@@ -505,26 +476,22 @@ class VtopService {
         _currentPage = null;
         _captchaData = null;
         
-        print('VtopService: Login successful! AuthorizedID: $_authorizedId');
         return VtopLoginResult(success: true, message: 'Login successful');
       }
       
       // Check for specific error messages
       if (response.body.contains('Invalid Captcha')) {
-        print('VtopService: Invalid captcha');
         return VtopLoginResult(success: false, message: 'Invalid Captcha');
       }
       
       if (response.body.contains('Invalid LoginId/Password') ||
           response.body.contains('Invalid  Username/Password') ||
           response.body.contains('Invalid Username/Password')) {
-        print('VtopService: Invalid credentials');
         return VtopLoginResult(success: false, message: 'Invalid credentials');
       }
       
       // Check if we're still on login page (login didn't work)
       if (response.body.contains('captchaStr') || response.body.contains('captcha')) {
-        print('VtopService: Still on login page - login did not succeed');
         
         // Try to find any alert/error message
         final alertPattern = RegExp(r'<div[^>]*class="[^"]*alert[^"]*"[^>]*>([^<]+)<', caseSensitive: false);
@@ -538,11 +505,6 @@ class VtopService {
         
         return VtopLoginResult(success: false, message: 'Login failed - captcha may be incorrect');
       }
-      
-      // Unknown state - print some of the response for debugging
-      print('VtopService: Unknown response state. First 500 chars:');
-      final debugLen = response.body.length > 500 ? 500 : response.body.length;
-      print(response.body.substring(0, debugLen));
       
       return VtopLoginResult(success: false, message: 'Login failed - unexpected response');
     } catch (e) {
@@ -559,8 +521,6 @@ class VtopService {
     try {
       final body = 'verifyMenu=true&authorizedID=$_authorizedId&_csrf=$_csrfToken&nocache=${DateTime.now().millisecondsSinceEpoch}';
       final response = await _doPost('$baseUrl/vtop/academics/common/StudentTimeTable', body);
-      
-      print('VtopService: Semesters response - Status: ${response.statusCode}, Body length: ${response.body.length}');
       
       if (response.statusCode != 200 || response.body.contains('login')) {
         _isAuthenticated = false;
@@ -582,17 +542,6 @@ class VtopService {
     try {
       final body = '_csrf=$_csrfToken&semesterSubId=$semesterId&authorizedID=$_authorizedId';
       final response = await _doPost('$baseUrl/vtop/processViewTimeTable', body);
-      
-      print('VtopService: Timetable response - Status: ${response.statusCode}, Body length: ${response.body.length}');
-      
-      // Debug: Save raw HTML to inspect structure
-      try {
-        final debugFile = File('C:\\Users\\Yonro\\Desktop\\timetable_debug.html');
-        await debugFile.writeAsString(response.body);
-        print('VtopService: DEBUG - Saved timetable HTML to ${debugFile.path}');
-      } catch (e) {
-        print('VtopService: DEBUG - Could not save debug file: $e');
-      }
       
       if (response.statusCode != 200 || response.body.contains('login')) {
         _isAuthenticated = false;
@@ -619,8 +568,6 @@ class VtopService {
     try {
       final body = '_csrf=$_csrfToken&semesterSubId=$semesterId&authorizedID=$_authorizedId';
       final response = await _doPost('$baseUrl/vtop/processViewStudentAttendance', body);
-      
-      print('VtopService: Attendance response - Status: ${response.statusCode}, Body length: ${response.body.length}');
       
       if (response.statusCode != 200 || response.body.contains('login')) {
         _isAuthenticated = false;
@@ -659,8 +606,6 @@ class VtopService {
       
       final response = await _doPost('$baseUrl/vtop/processViewAttendanceDetail', body);
       
-      print('VtopService: Attendance detail response - Status: ${response.statusCode}, Body length: ${response.body.length}');
-      
       if (response.statusCode != 200 || response.body.contains('login')) {
         _isAuthenticated = false;
         throw Exception('Session expired');
@@ -698,8 +643,6 @@ class VtopService {
       
       final streamedResponse = await request.send().timeout(const Duration(seconds: 30));
       final response = await http.Response.fromStream(streamedResponse);
-      
-      print('VtopService: Marks response - Status: ${response.statusCode}, Body length: ${response.body.length}');
       
       if (response.statusCode != 200 || response.body.contains('login')) {
         throw Exception('Session expired');
@@ -742,8 +685,6 @@ class VtopService {
       
       final streamedResponse = await request.send().timeout(const Duration(seconds: 30));
       final response = await http.Response.fromStream(streamedResponse);
-      
-      print('VtopService: Exam schedule response - Status: ${response.statusCode}, Body length: ${response.body.length}');
       
       if (response.statusCode != 200 || response.body.contains('login')) {
         throw Exception('Session expired');
@@ -881,11 +822,6 @@ class VtopService {
       semesters.add(Semester(id: id, name: name));
     }
     
-    print('VtopService: Parsed ${semesters.length} semesters');
-    for (final sem in semesters) {
-      print('  - ${sem.id}: ${sem.name}');
-    }
-    
     return semesters;
   }
   
@@ -905,161 +841,324 @@ class VtopService {
   List<TimetableSlot> _parseTimetable(String html) {
     final slots = <TimetableSlot>[];
     
-    // Debug: Check what tags exist in the HTML
-    final hasTable = html.toLowerCase().contains('<table');
-    final hasTbody = html.toLowerCase().contains('<tbody');
-    final hasTr = html.toLowerCase().contains('<tr');
-    print('VtopService: HTML contains - table: $hasTable, tbody: $hasTbody, tr: $hasTr');
-    
     final tablePattern = RegExp(r'<table[^>]*>(.*?)</table>', dotAll: true, caseSensitive: false);
-    final tables = tablePattern.allMatches(html).toList();
-    print('VtopService: Found ${tables.length} tables in response');
-    
-    // Build course info maps by finding the course registration table first
-    final courseNames = <String, String>{};
-    final facultyNames = <String, String>{};
-    
-    // Look for course info in a table that has course codes like CHY1009, CSE2005, etc.
-    for (final t in tables) {
-      final content = t.group(0) ?? '';
-      // Course table has course codes and names like "CHY1009 - Chemistry"
-      final coursePattern = RegExp(r'([A-Z]{3}\d{4})\s*-\s*([^<]+)', caseSensitive: false);
-      for (final match in coursePattern.allMatches(content)) {
-        final code = match.group(1)?.trim() ?? '';
-        final name = match.group(2)?.trim().split('(').first.trim() ?? '';
-        if (code.isNotEmpty && name.isNotEmpty && !courseNames.containsKey(code)) {
-          courseNames[code] = name;
-        }
-      }
-    }
-    print('VtopService: Extracted ${courseNames.length} course names: ${courseNames.keys.join(", ")}');
-    
-    // Now find the timetable grid table (contains day names)
-    String tableHtml = '';
-    for (final t in tables) {
-      final content = t.group(0) ?? '';
-      // The timetable grid table contains day names like MON, TUE, THU
-      if (content.contains('>MON<') || content.contains('>TUE<') || 
-          content.contains('>WED<') || content.contains('>THU<') ||
-          content.contains('>FRI<') || content.contains('>SAT<') ||
-          // Also check with td prefix
-          RegExp(r'<td[^>]*>\s*MON\s*</td>|<td[^>]*>\s*TUE\s*</td>|<td[^>]*>\s*WED\s*</td>|<td[^>]*>\s*THU\s*</td>|<td[^>]*>\s*FRI\s*</td>', caseSensitive: false).hasMatch(content)) {
-        tableHtml = content;
-        print('VtopService: Found timetable grid table with ${tableHtml.length} chars');
-        break;
-      }
-    }
-    
-    if (tableHtml.isEmpty) {
-      print('VtopService: Could not find timetable grid table');
-      return slots;
-    }
-    
+    final tbodyPattern = RegExp(r'<tbody[^>]*>(.*?)</tbody>', dotAll: true, caseSensitive: false);
     final rowPattern = RegExp(r'<tr[^>]*>(.*?)</tr>', dotAll: true, caseSensitive: false);
     final cellPattern = RegExp(r'<td[^>]*>(.*?)</td>', dotAll: true, caseSensitive: false);
     
-    // Parse all rows directly from the timetable grid table
-    final allRows = rowPattern.allMatches(tableHtml).map((m) => m.group(1) ?? '').toList();
-    print('VtopService: Found ${allRows.length} rows in timetable grid');
+    // Maps to store course info and faculty (keyed by course code)
+    final courseNames = <String, String>{};
+    final facultyTheory = <String, String>{};
+    final facultyLab = <String, String>{};
     
-    // Debug: print first few rows
-    for (int i = 0; i < allRows.length.clamp(0, 5); i++) {
-      final cells = cellPattern.allMatches(allRows[i]).toList();
-      final preview = cells.take(4).map((c) => _stripHtml(c.group(1) ?? '').replaceAll('\n', ' ').trim()).take(4).join(' | ');
-      print('VtopService: Row $i (${cells.length} cells): $preview');
+    // Find all tbody elements
+    final tbodies = tbodyPattern.allMatches(html).toList();
+    
+    // STEP 1: Parse course info from first tbody OR from any table with 9+ cell rows
+    // Try tbody first
+    if (tbodies.isNotEmpty) {
+      final firstTbody = tbodies[0].group(1) ?? '';
+      _extractCourseInfo(firstTbody, rowPattern, cellPattern, courseNames, facultyTheory, facultyLab);
     }
     
-    // Parse timetable rows
-    String currentDay = '';
-    bool isLabRow = false;
-    final days = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+    // Also scan all tables for course info (fallback)
+    final tables = tablePattern.allMatches(html).toList();
+    for (final t in tables) {
+      final content = t.group(1) ?? '';
+      _extractCourseInfo(content, rowPattern, cellPattern, courseNames, facultyTheory, facultyLab);
+    }
     
-    for (int rowIdx = 0; rowIdx < allRows.length; rowIdx++) {
-      final rowContent = allRows[rowIdx];
-      var cells = cellPattern.allMatches(rowContent).toList();
-      if (cells.isEmpty) continue;
+    // STEP 2: Parse timetable grid from second tbody
+    if (tbodies.length < 2) {
+      // Fallback: try to find table with day names
+      final tables = tablePattern.allMatches(html).toList();
+      for (final t in tables) {
+        final content = t.group(0) ?? '';
+        if (content.contains('>MON<') || content.contains('>TUE<') || 
+            content.contains('>WED<') || content.contains('>THU<') ||
+            RegExp(r'<td[^>]*>\s*(MON|TUE|WED|THU|FRI|SAT)\s*</td>', caseSensitive: false).hasMatch(content)) {
+          // Found timetable table, process it
+          return _parseTimetableFromTable(content, courseNames, facultyTheory, facultyLab);
+        }
+      }
+      return slots;
+    }
+    
+    final timetableTbody = tbodies[1].group(1) ?? '';
+    return _parseTimetableFromTable(timetableTbody, courseNames, facultyTheory, facultyLab);
+  }
+  
+  List<TimetableSlot> _parseTimetableFromTable(
+    String tableHtml,
+    Map<String, String> courseNames,
+    Map<String, String> facultyTheory,
+    Map<String, String> facultyLab,
+  ) {
+    final slots = <TimetableSlot>[];
+    final rowPattern = RegExp(r'<tr[^>]*>(.*?)</tr>', dotAll: true, caseSensitive: false);
+    final cellPattern = RegExp(r'<td[^>]*>(.*?)</td>', dotAll: true, caseSensitive: false);
+    
+    final allRows = rowPattern.allMatches(tableHtml).map((m) => m.group(1) ?? '').toList();
+    
+    // Timing storage: serial (column index) -> {start, end}
+    final timingsTheory = <String, Map<String, String>>{};
+    final timingsLab = <String, Map<String, String>>{};
+    
+    // Temporary slot storage to assign times after parsing
+    final tempSlots = <Map<String, dynamic>>[];
+    
+    String currentDay = '';
+    int countForOffset = 0;
+    
+    for (final rowContent in allRows) {
+      var cells = cellPattern.allMatches(rowContent).map((m) => m.group(1) ?? '').toList();
       
-      // First few cells might contain: Day name, THEORY/LAB indicator
-      int dataStartIdx = 0;
-      for (int i = 0; i < cells.length.clamp(0, 3); i++) {
-        final cellText = _stripHtml(cells[i].group(1) ?? '').replaceAll('\t', ' ').replaceAll('\n', ' ').trim().toUpperCase();
+      // Only process rows with more than 6 cells (like vitap-mate)
+      if (cells.length <= 6) continue;
+      
+      // On even offset rows, first cell contains day name or timing label
+      if (countForOffset % 2 == 0) {
+        final firstCell = _stripHtml(cells[0]).replaceAll('\t', '').replaceAll('\n', '').trim().toUpperCase();
         
-        if (days.any((d) => cellText == d)) {
-          currentDay = _normalizeDay(cellText);
-          dataStartIdx = i + 1;
-          continue;
+        // Check if it's a day name
+        final dayNames = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+        if (dayNames.contains(firstCell)) {
+          currentDay = _normalizeDay(firstCell);
         }
-        if (cellText == 'THEORY') {
-          isLabRow = false;
-          dataStartIdx = i + 1;
-          continue;
-        }
-        if (cellText == 'LAB') {
-          isLabRow = true;
-          dataStartIdx = i + 1;
-          continue;
+        
+        // Remove first cell (day/label)
+        cells = cells.sublist(1);
+      }
+      
+      // Process cells based on countForOffset
+      for (int index = 0; index < cells.length; index++) {
+        final cellContent = _stripHtml(cells[index]).replaceAll('\t', '').replaceAll('\n', '').trim();
+        
+        if (countForOffset < 4) {
+          // Timing rows
+          if (countForOffset == 0) {
+            // Theory START times
+            timingsTheory[index.toString()] = {'start': cellContent, 'end': ''};
+          } else if (countForOffset == 1) {
+            // Theory END times
+            if (timingsTheory.containsKey(index.toString())) {
+              timingsTheory[index.toString()]!['end'] = cellContent;
+            }
+          } else if (countForOffset == 2) {
+            // Lab START times
+            timingsLab[index.toString()] = {'start': cellContent, 'end': ''};
+          } else if (countForOffset == 3) {
+            // Lab END times
+            if (timingsLab.containsKey(index.toString())) {
+              timingsLab[index.toString()]!['end'] = cellContent;
+            }
+          }
+        } else {
+          // Day rows (class slots) - countForOffset > 3
+          if (cellContent.isEmpty || index == 0) continue;
+          
+          // Check for valid slot format: SLOT-CODE-TYPE-ROOM-...
+          if (cellContent.length > 5 && cellContent.contains('-')) {
+            final parts = cellContent.split('-').where((p) => p.trim().isNotEmpty).toList();
+            if (parts.length > 2) {
+              // is_lab determined by odd countForOffset
+              final isLabRow = countForOffset % 2 != 0;
+              
+              final slotName = parts[0].trim();
+              final code = parts.length > 1 ? parts[1].trim() : '';
+              final courseTypeRaw = parts.length > 2 ? parts[2].trim().toUpperCase() : '';
+              final room = parts.length > 3 ? parts[3].trim() : '';
+              final blockParts = parts.length > 4 ? parts.sublist(4) : <String>[];
+              final block = blockParts.take(2).join(' ');
+              
+              String courseType = courseTypeRaw;
+              if (courseTypeRaw == 'ETH' || courseTypeRaw == 'TH') courseType = 'Theory';
+              if (courseTypeRaw == 'ELA' || courseTypeRaw == 'LA') courseType = 'Lab';
+              
+              // Get faculty - try both maps
+              String faculty = '';
+              if (isLabRow) {
+                faculty = facultyLab[code] ?? facultyTheory[code] ?? '';
+              } else {
+                faculty = facultyTheory[code] ?? facultyLab[code] ?? '';
+              }
+              
+              final fullVenue = block.isNotEmpty ? '$room-$block' : room;
+              
+              // Store with serial (column index) for time matching later
+              tempSlots.add({
+                'day': currentDay.isNotEmpty ? currentDay : 'Unknown',
+                'slotName': slotName,
+                'courseCode': code,
+                'courseName': courseNames[code] ?? '',
+                'courseType': courseType,
+                'venue': fullVenue,
+                'block': block,
+                'isLab': isLabRow,
+                'faculty': faculty,
+                'serial': index.toString(),
+              });
+            }
+          }
         }
       }
       
-      // Skip header rows (THEORY Start/End, LAB Start/End)
-      final firstCellText = _stripHtml(cells.first.group(1) ?? '').toUpperCase().trim();
-      if (firstCellText == 'START' || firstCellText == 'END' || 
-          firstCellText.contains('THEORY') && (allRows[rowIdx].contains('Start') || allRows[rowIdx].contains('End'))) {
-        continue;
+      countForOffset++;
+    }
+    
+    // STEP 3: Match times to slots using serial (like vitap-mate)
+    for (int i = 0; i < tempSlots.length; i++) {
+      final slotData = tempSlots[i];
+      final serial = slotData['serial'] as String;
+      final isLab = slotData['isLab'] as bool;
+      
+      String startTime = '';
+      String endTime = '';
+      
+      // Theory slots use timingsTheory, Lab slots use timingsLab
+      if (!isLab && timingsTheory.containsKey(serial)) {
+        startTime = timingsTheory[serial]!['start'] ?? '';
+        endTime = timingsTheory[serial]!['end'] ?? '';
+      }
+      if (isLab && timingsLab.containsKey(serial)) {
+        startTime = timingsLab[serial]!['start'] ?? '';
+        endTime = timingsLab[serial]!['end'] ?? '';
       }
       
-      // Process remaining cells for slot data
-      for (int i = dataStartIdx; i < cells.length; i++) {
-        final cellContent = _stripHtml(cells[i].group(1) ?? '').replaceAll('\t', ' ').replaceAll('\n', ' ').trim();
+      // Fallback: if times not found, try the other timing map
+      if (startTime.isEmpty && !isLab && timingsLab.containsKey(serial)) {
+        startTime = timingsLab[serial]!['start'] ?? '';
+        endTime = timingsLab[serial]!['end'] ?? '';
+      }
+      if (startTime.isEmpty && isLab && timingsTheory.containsKey(serial)) {
+        startTime = timingsTheory[serial]!['start'] ?? '';
+        endTime = timingsTheory[serial]!['end'] ?? '';
+      }
+      
+      slots.add(TimetableSlot(
+        day: slotData['day'] as String,
+        slotName: slotData['slotName'] as String,
+        courseCode: slotData['courseCode'] as String,
+        courseName: slotData['courseName'] as String,
+        courseType: slotData['courseType'] as String,
+        venue: slotData['venue'] as String,
+        block: slotData['block'] as String,
+        startTime: startTime,
+        endTime: endTime,
+        isLab: isLab,
+        faculty: slotData['faculty'] as String,
+        serial: i,
+      ));
+    }
+    
+    return slots;
+  }
+  
+  /// Helper method to extract course names and faculty from course info tables
+  void _extractCourseInfo(
+    String content,
+    RegExp rowPattern,
+    RegExp cellPattern,
+    Map<String, String> courseNames,
+    Map<String, String> facultyTheory,
+    Map<String, String> facultyLab,
+  ) {
+    final rows = rowPattern.allMatches(content).toList();
+    
+    for (final row in rows) {
+      final rowHtml = row.group(1) ?? '';
+      final cells = cellPattern.allMatches(rowHtml).toList();
+      
+      // Need at least 9 cells for course info table
+      if (cells.length < 9) continue;
+      
+      // Extract all cell text first
+      final cellTexts = cells.map((c) => _stripHtml(c.group(1) ?? '').replaceAll('\t', '').replaceAll('\n', '').trim()).toList();
+      
+      // Try to find course code and name
+      // Usually in format: "CODE - Course Name (Theory/Lab)" in one of the first cells
+      String? courseCode;
+      String? courseName;
+      bool isLab = false;
+      
+      for (int i = 0; i < cells.length && i < 5; i++) {
+        final cellText = cellTexts[i];
         
-        // Skip empty or placeholder cells
-        if (cellContent.isEmpty || cellContent == '-' || cellContent == '--' || cellContent == 'Lunch') {
-          continue;
+        // Look for cell with CODE-Name format (CODE is like CSE1001, ENG1001, etc.)
+        if (cellText.contains('-')) {
+          // Try to extract code as first part before dash
+          final parts = cellText.split('-');
+          if (parts.isNotEmpty) {
+            final possibleCode = parts[0].trim();
+            // Course codes are typically 7 characters: 3 letters + 4 digits
+            if (possibleCode.length >= 6 && possibleCode.length <= 8 && 
+                RegExp(r'^[A-Z]+\d+').hasMatch(possibleCode)) {
+              courseCode = possibleCode;
+              
+              // Get the rest as course name
+              if (parts.length > 1) {
+                var rest = parts.sublist(1).join('-').trim();
+                final parenIndex = rest.indexOf('(');
+                if (parenIndex > 0) {
+                  courseName = rest.substring(0, parenIndex).trim();
+                  isLab = rest.toLowerCase().contains('lab') || rest.toLowerCase().contains('ela');
+                } else {
+                  courseName = rest;
+                }
+              }
+              break;
+            }
+          }
+        }
+      }
+      
+      // If we found course code and name, store them
+      if (courseCode != null && courseName != null && courseName.isNotEmpty) {
+        if (!courseNames.containsKey(courseCode)) {
+          courseNames[courseCode] = courseName;
         }
         
-        // Look for slot patterns: SLOT-CODE-TYPE-ROOM-BLOCK-...
-        // e.g., "L11-CSE2005-ELA-309-AB-1-ALL" or "D1-CSE2005-ETH-101-AB-1-ALL"
-        if (cellContent.contains('-')) {
-          final parts = cellContent.split('-').where((p) => p.trim().isNotEmpty).toList();
-          if (parts.length >= 4) {
-            final slotName = parts[0].trim();
-            final code = parts[1].trim();
-            var courseType = parts[2].trim().toUpperCase();
-            final room = parts[3].trim();
-            final block = parts.length > 4 ? parts[4].trim() : '';
-            
-            // Normalize course type
-            if (courseType == 'ETH' || courseType == 'TH') courseType = 'Theory';
-            if (courseType == 'ELA' || courseType == 'LA') courseType = 'Lab';
-            
-            final slotIsLab = isLabRow || courseType == 'Lab' || slotName.contains('+') || slotName.startsWith('L');
-            
-            slots.add(TimetableSlot(
-              day: currentDay.isNotEmpty ? currentDay : 'Unknown',
-              slotName: slotName,
-              courseCode: code,
-              courseName: courseNames[code] ?? '',
-              courseType: courseType,
-              venue: room,
-              block: block,
-              startTime: '',
-              endTime: '',
-              isLab: slotIsLab,
-              faculty: facultyNames[code] ?? '',
-              serial: slots.length,
-            ));
+        // Find faculty name - it's typically the cell with a proper name format
+        // VTOP faculty cell is usually cells[8] (9th cell, 0-indexed)
+        // Faculty names have spaces and are typically all caps or mixed case
+        
+        // First try cell 8 (most common position)
+        String facultyName = '';
+        if (cells.length > 8) {
+          final text = cellTexts[8];
+          // Faculty name validation: not empty, not short codes, not type indicators
+          if (text.length >= 5 &&
+              !RegExp(r'^\d+$').hasMatch(text) && // Not just numbers
+              !['theory', 'lab', 'eth', 'ela', 'th', 'la', 'lo', 'project', 'tutorial'].contains(text.toLowerCase())) {
+            facultyName = text;
+          }
+        }
+        
+        // If not found in cell 8, search other cells (6-10)
+        if (facultyName.isEmpty) {
+          for (int i = 6; i < cells.length && i <= 10; i++) {
+            if (i == 8) continue; // Already tried
+            final text = cellTexts[i];
+            // Look for proper name pattern (has space, reasonable length, not a code)
+            if (text.length >= 8 && text.contains(' ') &&
+                !RegExp(r'^\d').hasMatch(text) && // Doesn't start with number
+                !RegExp(r'^[A-Z]{2,6}\d').hasMatch(text)) { // Not a course code
+              facultyName = text;
+              break;
+            }
+          }
+        }
+        
+        // Store faculty
+        if (facultyName.isNotEmpty) {
+          if (isLab) {
+            if (!facultyLab.containsKey(courseCode)) facultyLab[courseCode] = facultyName;
+          } else {
+            if (!facultyTheory.containsKey(courseCode)) facultyTheory[courseCode] = facultyName;
           }
         }
       }
     }
-    
-    print('VtopService: Parsed ${slots.length} timetable slots');
-    for (final day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']) {
-      final daySlots = slots.where((s) => s.day == day).length;
-      print('VtopService: $day: $daySlots slots');
-    }
-    
-    return slots;
   }
   
   List<AttendanceCourse> _parseAttendance(String html) {
@@ -1129,8 +1228,6 @@ class VtopService {
       }
     }
     
-    print('VtopService: Parsed ${courses.length} attendance courses');
-    
     return courses;
   }
   
@@ -1145,8 +1242,6 @@ class VtopService {
     
     // Skip first 3 rows as per vitap-mate (headers)
     final rows = rowPattern.allMatches(html).skip(3).toList();
-    
-    print('VtopService: Attendance detail - found ${rows.length} rows after skipping headers');
     
     for (final row in rows) {
       final rowHtml = row.group(1) ?? '';
@@ -1176,13 +1271,10 @@ class VtopService {
           status: status,
           remark: remark,
         ));
-      } catch (e) {
-        print('VtopService: Error parsing attendance detail row: $e');
+      } catch (_) {
         continue;
       }
     }
-    
-    print('VtopService: Parsed ${details.length} attendance detail records');
     
     return details;
   }
@@ -1256,8 +1348,6 @@ class VtopService {
       }
     }
     
-    print('VtopService: Parsed ${courses.length} marks courses');
-    
     return courses;
   }
   
@@ -1311,8 +1401,6 @@ class VtopService {
     if (currentGroup != null) {
       examGroups.add(currentGroup);
     }
-    
-    print('VtopService: Parsed ${examGroups.length} exam groups');
     
     return examGroups;
   }
