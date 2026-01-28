@@ -16,17 +16,155 @@ class VtopService {
   bool _isAuthenticated = false;
   String? _currentPage; // Store current page HTML for parsing
   String? _captchaData;
+  String? _loginActionUrl; // Store the form action URL for login
   
   late final http.Client _client;
+  late final HttpClient _httpClient;
   
   VtopService() {
     // Create an HttpClient that accepts bad certificates (for VTOP's SSL)
-    final httpClient = HttpClient()
+    // and follows redirects properly
+    _httpClient = HttpClient()
       ..badCertificateCallback = (X509Certificate cert, String host, int port) {
         // Only accept bad certificates for VTOP domain
         return host.contains('vtop.vitap.ac.in');
-      };
-    _client = IOClient(httpClient);
+      }
+      ..autoUncompress = true
+      ..maxConnectionsPerHost = 5;
+    // Don't auto-follow redirects so we can capture cookies from each response
+    _httpClient.findProxy = null;
+    _client = IOClient(_httpClient);
+  }
+  
+  /// Make a GET request that follows redirects and collects cookies
+  Future<_HttpResponse> _doGet(String url) async {
+    var currentUrl = url;
+    String body = '';
+    int statusCode = 0;
+    
+    for (int redirects = 0; redirects < 10; redirects++) {
+      final request = await _httpClient.getUrl(Uri.parse(currentUrl));
+      
+      // Add headers
+      request.headers.set('User-Agent', 'Mozilla/5.0 (Linux; U; Linux x86_64; en-US) Gecko/20100101 Firefox/130.5');
+      request.headers.set('Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8');
+      request.followRedirects = false; // Handle manually to capture cookies
+      if (_cookie != null) {
+        request.headers.set('Cookie', _cookie!);
+      }
+      
+      final response = await request.close();
+      statusCode = response.statusCode;
+      
+      // Extract cookies
+      _extractCookiesFromResponse(response);
+      
+      // Check for redirect
+      if (statusCode == 301 || statusCode == 302 || statusCode == 303 || statusCode == 307 || statusCode == 308) {
+        final location = response.headers.value('location');
+        if (location != null) {
+          // Handle relative URLs
+          if (location.startsWith('/')) {
+            currentUrl = '$baseUrl$location';
+          } else if (!location.startsWith('http')) {
+            currentUrl = '$baseUrl/$location';
+          } else {
+            currentUrl = location;
+          }
+          // Drain the response body
+          await response.drain();
+          continue;
+        }
+      }
+      
+      // Read body
+      body = await response.transform(utf8.decoder).join();
+      break;
+    }
+    
+    return _HttpResponse(statusCode: statusCode, body: body);
+  }
+  
+  /// Make a POST request that follows redirects and collects cookies
+  Future<_HttpResponse> _doPost(String url, String postBody) async {
+    var currentUrl = url;
+    String body = '';
+    int statusCode = 0;
+    bool isPost = true;
+    
+    for (int redirects = 0; redirects < 10; redirects++) {
+      HttpClientRequest request;
+      if (isPost) {
+        request = await _httpClient.postUrl(Uri.parse(currentUrl));
+        request.headers.set('Content-Type', 'application/x-www-form-urlencoded');
+      } else {
+        request = await _httpClient.getUrl(Uri.parse(currentUrl));
+      }
+      
+      // Add headers
+      request.headers.set('User-Agent', 'Mozilla/5.0 (Linux; U; Linux x86_64; en-US) Gecko/20100101 Firefox/130.5');
+      request.headers.set('Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8');
+      request.followRedirects = false; // Handle manually to capture cookies
+      if (_cookie != null) {
+        request.headers.set('Cookie', _cookie!);
+      }
+      
+      if (isPost) {
+        request.write(postBody);
+      }
+      
+      final response = await request.close();
+      statusCode = response.statusCode;
+      
+      // Extract cookies
+      _extractCookiesFromResponse(response);
+      
+      // Check for redirect
+      if (statusCode == 301 || statusCode == 302 || statusCode == 303 || statusCode == 307 || statusCode == 308) {
+        final location = response.headers.value('location');
+        if (location != null) {
+          // Handle relative URLs
+          if (location.startsWith('/')) {
+            currentUrl = '$baseUrl$location';
+          } else if (!location.startsWith('http')) {
+            currentUrl = '$baseUrl/$location';
+          } else {
+            currentUrl = location;
+          }
+          // Drain the response body
+          await response.drain();
+          // After redirect, use GET (except for 307/308)
+          if (statusCode == 302 || statusCode == 303) {
+            isPost = false;
+          }
+          continue;
+        }
+      }
+      
+      // Read body
+      body = await response.transform(utf8.decoder).join();
+      break;
+    }
+    
+    return _HttpResponse(statusCode: statusCode, body: body);
+  }
+  
+  void _extractCookiesFromResponse(HttpClientResponse response) {
+    // Extract from Set-Cookie header
+    final setCookieHeaders = response.headers['set-cookie'];
+    if (setCookieHeaders != null) {
+      for (final cookieHeader in setCookieHeaders) {
+        final cookiePart = cookieHeader.split(';').first.trim();
+        if (cookiePart.contains('=')) {
+          _updateCookieFromString(cookiePart);
+        }
+      }
+    }
+    // Also from response.cookies
+    if (response.cookies.isNotEmpty) {
+      final cookieStr = response.cookies.map((c) => '${c.name}=${c.value}').join('; ');
+      _updateCookieFromString(cookieStr);
+    }
   }
   
   bool get isAuthenticated => _isAuthenticated;
@@ -78,6 +216,7 @@ class VtopService {
       _authorizedId = null;
       _currentPage = null;
       _captchaData = null;
+      _loginActionUrl = null;
       
       // Maximum captcha retry attempts (matching reference: MAX_CAP_TRY = 40)
       const maxAttempts = 40;
@@ -127,25 +266,30 @@ class VtopService {
   /// Load initial VTOP page at /vtop/open/page - matching reference implementation
   Future<_PageResult> _loadInitialPage() async {
     try {
-      final response = await _client.get(
-        Uri.parse('$baseUrl/vtop/open/page'),
-        headers: _getVtopHeaders(),
-      ).timeout(const Duration(seconds: 30));
+      // Use our redirect-following GET method
+      final response = await _doGet('$baseUrl/vtop/open/page');
       
-      if (response.statusCode != 200) {
+      print('VtopService: Initial page loaded. Status: ${response.statusCode}, Cookie: $_cookie');
+      
+      // Check for errors
+      if (response.statusCode >= 400) {
         return _PageResult(success: false, message: 'Server error: ${response.statusCode}');
       }
-      
-      // Extract cookies
-      _updateCookie(response.headers['set-cookie']);
       
       // Store current page
       _currentPage = response.body;
       
+      print('VtopService: Response body length: ${response.body.length}');
+      
       // Extract CSRF token
       if (!_extractCsrfFromCurrentPage()) {
+        // Debug: print first 500 chars to see what we got
+        final debugLen = response.body.length > 500 ? 500 : response.body.length;
+        print('VtopService: CSRF not found. First 500 chars: ${response.body.substring(0, debugLen)}');
         return _PageResult(success: false, message: 'CSRF token not found in initial page');
       }
+      
+      print('VtopService: CSRF token found: $_csrfToken');
       
       return _PageResult(success: true);
     } catch (e) {
@@ -174,26 +318,38 @@ class VtopService {
       const maxReloadAttempts = 20;
       
       for (int i = 0; i < maxReloadAttempts; i++) {
-        final response = await _client.post(
-          Uri.parse('$baseUrl/vtop/prelogin/setup'),
-          headers: _getVtopHeaders(contentType: 'application/x-www-form-urlencoded'),
-          body: '_csrf=$_csrfToken&flag=VTOP',
-        ).timeout(const Duration(seconds: 30));
+        // Use our redirect-following POST method
+        final postBody = '_csrf=$_csrfToken&flag=VTOP';
+        final response = await _doPost('$baseUrl/vtop/prelogin/setup', postBody);
         
-        _updateCookie(response.headers['set-cookie']);
+        print('VtopService: prelogin/setup response - Status: ${response.statusCode}, Body length: ${response.body.length}');
         
-        if (response.statusCode != 200) {
+        if (response.statusCode >= 400) {
           return _PageResult(success: false, message: 'Server error: ${response.statusCode}');
         }
         
         // Check if response contains base64 captcha image
         if (response.body.contains('base64,')) {
+          print('VtopService: Found base64 in response!');
           _currentPage = response.body;
+          
+          // Extract new CSRF token from this page (the form might have a different one)
+          _extractCsrfFromCurrentPage();
+          print('VtopService: CSRF after prelogin: $_csrfToken');
+          
+          // Extract form action URL and save it
+          _loginActionUrl = _extractFormAction(response.body);
+          print('VtopService: Form action URL: $_loginActionUrl');
           
           // Extract captcha data
           if (_extractCaptchaFromCurrentPage()) {
+            print('VtopService: Captcha extracted successfully');
             return _PageResult(success: true, captchaData: _captchaData);
           }
+        } else {
+          // Debug: show what we got
+          final debugLen = response.body.length > 300 ? 300 : response.body.length;
+          print('VtopService: No base64 in response. First 300 chars: ${response.body.substring(0, debugLen)}');
         }
         
         // No captcha found, retry
@@ -204,6 +360,24 @@ class VtopService {
     } catch (e) {
       return _PageResult(success: false, message: 'Network error: $e');
     }
+  }
+  
+  /// Extract form action URL from HTML
+  String? _extractFormAction(String html) {
+    // Look for form with id="loginForm" or similar, or just any form action
+    final patterns = [
+      RegExp(r'''<form[^>]+id=["']?login[^"']*["']?[^>]+action=["']([^"']+)["']''', caseSensitive: false),
+      RegExp(r'''<form[^>]+action=["']([^"']+)["'][^>]+id=["']?login''', caseSensitive: false),
+      RegExp(r'''<form[^>]+action=["'](/vtop/[^"']+)["']''', caseSensitive: false),
+    ];
+    
+    for (final pattern in patterns) {
+      final match = pattern.firstMatch(html);
+      if (match != null) {
+        return match.group(1);
+      }
+    }
+    return null;
   }
   
   /// Extract CSRF token from current page HTML
@@ -284,7 +458,7 @@ class VtopService {
     }
   }
   
-  /// Perform the actual login - POST to /vtop/login
+  /// Perform the actual login - POST to the login form action URL
   Future<VtopLoginResult> _performLogin(String username, String password, String captcha) async {
     try {
       if (_csrfToken == null) {
@@ -295,41 +469,82 @@ class VtopService {
       final encodedUsername = Uri.encodeComponent(username);
       final encodedPassword = Uri.encodeComponent(password);
       
-      final response = await _client.post(
-        Uri.parse('$baseUrl/vtop/login'),
-        headers: _getVtopHeaders(contentType: 'application/x-www-form-urlencoded'),
-        body: '_csrf=$_csrfToken&username=$encodedUsername&password=$encodedPassword&captchaStr=$captcha',
-      ).timeout(const Duration(seconds: 30));
+      // Determine login URL - use extracted form action or default to /vtop/doLogin
+      final loginUrl = _loginActionUrl != null 
+          ? (_loginActionUrl!.startsWith('http') ? _loginActionUrl! : '$baseUrl$_loginActionUrl')
+          : '$baseUrl/vtop/doLogin';
       
-      _updateCookie(response.headers['set-cookie']);
+      print('VtopService: Posting login to: $loginUrl');
       
-      final responseUrl = response.request?.url.toString() ?? '';
-      final responseBody = response.body;
+      // Build POST body
+      final postBody = '_csrf=$_csrfToken&username=$encodedUsername&password=$encodedPassword&captchaStr=$captcha';
       
-      // Check for error in URL or response
-      if (responseUrl.contains('error') || responseBody.contains('text-danger')) {
-        if (responseBody.contains('Invalid Captcha')) {
-          return VtopLoginResult(success: false, message: 'Invalid Captcha');
-        }
-        if (responseBody.contains('Invalid LoginId/Password') ||
-            responseBody.contains('Invalid  Username/Password') ||
-            responseBody.contains('Invalid Username/Password')) {
-          return VtopLoginResult(success: false, message: 'Invalid credentials');
-        }
-        return VtopLoginResult(success: false, message: 'Login failed');
+      // Use our redirect-following POST method
+      final response = await _doPost(loginUrl, postBody);
+      
+      print('VtopService: Login response - Status: ${response.statusCode}, Body length: ${response.body.length}');
+      
+      // First check for success indicators - if we see these, login worked!
+      final hasAuthorizedId = response.body.contains('authorizedID') || response.body.contains('authorizedIDX');
+      final hasStudentContent = response.body.contains('Student Portal') || 
+                                response.body.contains('Welcome') ||
+                                response.body.contains('vtop/content') ||
+                                response.body.contains('Academics') ||
+                                response.body.contains('Time Table');
+      
+      print('VtopService: Success indicators - authorizedID: $hasAuthorizedId, studentContent: $hasStudentContent');
+      
+      if (hasAuthorizedId || hasStudentContent) {
+        // Success - extract new CSRF and authorized ID
+        _currentPage = response.body;
+        _extractCsrfFromCurrentPage();
+        
+        // Extract authorized ID (registration number) from authorizedIDX hidden input
+        _authorizedId = _extractAuthorizedId(response.body) ?? username;
+        _isAuthenticated = true;
+        _currentPage = null;
+        _captchaData = null;
+        
+        print('VtopService: Login successful! AuthorizedID: $_authorizedId');
+        return VtopLoginResult(success: true, message: 'Login successful');
       }
       
-      // Success - extract new CSRF and authorized ID
-      _currentPage = responseBody;
-      _extractCsrfFromCurrentPage();
+      // Check for specific error messages
+      if (response.body.contains('Invalid Captcha')) {
+        print('VtopService: Invalid captcha');
+        return VtopLoginResult(success: false, message: 'Invalid Captcha');
+      }
       
-      // Extract authorized ID (registration number) from authorizedIDX hidden input
-      _authorizedId = _extractAuthorizedId(responseBody) ?? username;
-      _isAuthenticated = true;
-      _currentPage = null;
-      _captchaData = null;
+      if (response.body.contains('Invalid LoginId/Password') ||
+          response.body.contains('Invalid  Username/Password') ||
+          response.body.contains('Invalid Username/Password')) {
+        print('VtopService: Invalid credentials');
+        return VtopLoginResult(success: false, message: 'Invalid credentials');
+      }
       
-      return VtopLoginResult(success: true, message: 'Login successful');
+      // Check if we're still on login page (login didn't work)
+      if (response.body.contains('captchaStr') || response.body.contains('captcha')) {
+        print('VtopService: Still on login page - login did not succeed');
+        
+        // Try to find any alert/error message
+        final alertPattern = RegExp(r'<div[^>]*class="[^"]*alert[^"]*"[^>]*>([^<]+)<', caseSensitive: false);
+        final alertMatch = alertPattern.firstMatch(response.body);
+        if (alertMatch != null) {
+          final alertText = alertMatch.group(1)?.trim() ?? '';
+          if (alertText.isNotEmpty) {
+            return VtopLoginResult(success: false, message: alertText);
+          }
+        }
+        
+        return VtopLoginResult(success: false, message: 'Login failed - captcha may be incorrect');
+      }
+      
+      // Unknown state - print some of the response for debugging
+      print('VtopService: Unknown response state. First 500 chars:');
+      final debugLen = response.body.length > 500 ? 500 : response.body.length;
+      print(response.body.substring(0, debugLen));
+      
+      return VtopLoginResult(success: false, message: 'Login failed - unexpected response');
     } catch (e) {
       return VtopLoginResult(success: false, message: 'Login error: $e');
     }
@@ -342,13 +557,13 @@ class VtopService {
     }
     
     try {
-      final response = await _client.post(
-        Uri.parse('$baseUrl/vtop/academics/common/StudentTimeTable'),
-        headers: _getVtopHeaders(contentType: 'application/x-www-form-urlencoded'),
-        body: 'verifyMenu=true&authorizedID=$_authorizedId&_csrf=$_csrfToken&nocache=${DateTime.now().millisecondsSinceEpoch}',
-      ).timeout(const Duration(seconds: 30));
+      final body = 'verifyMenu=true&authorizedID=$_authorizedId&_csrf=$_csrfToken&nocache=${DateTime.now().millisecondsSinceEpoch}';
+      final response = await _doPost('$baseUrl/vtop/academics/common/StudentTimeTable', body);
+      
+      print('VtopService: Semesters response - Status: ${response.statusCode}, Body length: ${response.body.length}');
       
       if (response.statusCode != 200 || response.body.contains('login')) {
+        _isAuthenticated = false;
         throw Exception('Session expired');
       }
       
@@ -365,13 +580,13 @@ class VtopService {
     }
     
     try {
-      final response = await _client.post(
-        Uri.parse('$baseUrl/vtop/processViewTimeTable'),
-        headers: _getVtopHeaders(contentType: 'application/x-www-form-urlencoded'),
-        body: '_csrf=$_csrfToken&semesterSubId=$semesterId&authorizedID=$_authorizedId',
-      ).timeout(const Duration(seconds: 30));
+      final body = '_csrf=$_csrfToken&semesterSubId=$semesterId&authorizedID=$_authorizedId';
+      final response = await _doPost('$baseUrl/vtop/processViewTimeTable', body);
+      
+      print('VtopService: Timetable response - Status: ${response.statusCode}, Body length: ${response.body.length}');
       
       if (response.statusCode != 200 || response.body.contains('login')) {
+        _isAuthenticated = false;
         throw Exception('Session expired');
       }
       
@@ -393,13 +608,13 @@ class VtopService {
     }
     
     try {
-      final response = await _client.post(
-        Uri.parse('$baseUrl/vtop/processViewStudentAttendance'),
-        headers: _getVtopHeaders(contentType: 'application/x-www-form-urlencoded'),
-        body: '_csrf=$_csrfToken&semesterSubId=$semesterId&authorizedID=$_authorizedId',
-      ).timeout(const Duration(seconds: 30));
+      final body = '_csrf=$_csrfToken&semesterSubId=$semesterId&authorizedID=$_authorizedId';
+      final response = await _doPost('$baseUrl/vtop/processViewStudentAttendance', body);
+      
+      print('VtopService: Attendance response - Status: ${response.statusCode}, Body length: ${response.body.length}');
       
       if (response.statusCode != 200 || response.body.contains('login')) {
+        _isAuthenticated = false;
         throw Exception('Session expired');
       }
       
@@ -414,18 +629,34 @@ class VtopService {
     }
   }
   
-  /// Fetch marks for a semester
+  /// Fetch marks for a semester - uses multipart form as per reference
   Future<MarksData> fetchMarks(String semesterId) async {
     if (!_isAuthenticated) {
       throw Exception('Not authenticated');
     }
     
     try {
-      final response = await _client.post(
+      // Marks endpoint requires multipart form data
+      final request = http.MultipartRequest(
+        'POST',
         Uri.parse('$baseUrl/vtop/examinations/doStudentMarkView'),
-        headers: _getVtopHeaders(contentType: 'application/x-www-form-urlencoded'),
-        body: '_csrf=$_csrfToken&semesterSubId=$semesterId&authorizedID=$_authorizedId',
-      ).timeout(const Duration(seconds: 30));
+      );
+      
+      // Add headers
+      request.headers.addAll({
+        'Cookie': _cookie ?? '',
+        'User-Agent': 'Mozilla/5.0 (Linux; U; Linux x86_64; en-US) Gecko/20100101 Firefox/130.5',
+      });
+      
+      // Add form fields
+      request.fields['authorizedID'] = _authorizedId ?? '';
+      request.fields['semesterSubId'] = semesterId;
+      request.fields['_csrf'] = _csrfToken ?? '';
+      
+      final streamedResponse = await request.send().timeout(const Duration(seconds: 30));
+      final response = await http.Response.fromStream(streamedResponse);
+      
+      print('VtopService: Marks response - Status: ${response.statusCode}, Body length: ${response.body.length}');
       
       if (response.statusCode != 200 || response.body.contains('login')) {
         throw Exception('Session expired');
@@ -442,18 +673,34 @@ class VtopService {
     }
   }
   
-  /// Fetch exam schedule for a semester
+  /// Fetch exam schedule for a semester - uses multipart form as per reference
   Future<ExamScheduleData> fetchExamSchedule(String semesterId) async {
     if (!_isAuthenticated) {
       throw Exception('Not authenticated');
     }
     
     try {
-      final response = await _client.post(
+      // Exam schedule endpoint requires multipart form data
+      final request = http.MultipartRequest(
+        'POST',
         Uri.parse('$baseUrl/vtop/examinations/doSearchExamScheduleForStudent'),
-        headers: _getVtopHeaders(contentType: 'application/x-www-form-urlencoded'),
-        body: '_csrf=$_csrfToken&semesterSubId=$semesterId&authorizedID=$_authorizedId',
-      ).timeout(const Duration(seconds: 30));
+      );
+      
+      // Add headers
+      request.headers.addAll({
+        'Cookie': _cookie ?? '',
+        'User-Agent': 'Mozilla/5.0 (Linux; U; Linux x86_64; en-US) Gecko/20100101 Firefox/130.5',
+      });
+      
+      // Add form fields
+      request.fields['authorizedID'] = _authorizedId ?? '';
+      request.fields['semesterSubId'] = semesterId;
+      request.fields['_csrf'] = _csrfToken ?? '';
+      
+      final streamedResponse = await request.send().timeout(const Duration(seconds: 30));
+      final response = await http.Response.fromStream(streamedResponse);
+      
+      print('VtopService: Exam schedule response - Status: ${response.statusCode}, Body length: ${response.body.length}');
       
       if (response.statusCode != 200 || response.body.contains('login')) {
         throw Exception('Session expired');
@@ -512,6 +759,30 @@ class VtopService {
     }
   }
   
+  void _updateCookieFromString(String cookieStr) {
+    if (cookieStr.isEmpty) return;
+    
+    if (_cookie == null) {
+      _cookie = cookieStr;
+    } else {
+      // Merge cookies
+      final existingMap = <String, String>{};
+      for (final c in _cookie!.split('; ')) {
+        final parts = c.split('=');
+        if (parts.length >= 2) {
+          existingMap[parts[0]] = parts.sublist(1).join('=');
+        }
+      }
+      for (final c in cookieStr.split('; ')) {
+        final parts = c.split('=');
+        if (parts.length >= 2) {
+          existingMap[parts[0]] = parts.sublist(1).join('=');
+        }
+      }
+      _cookie = existingMap.entries.map((e) => '${e.key}=${e.value}').join('; ');
+    }
+  }
+  
   String? _extractAuthorizedId(String html) {
     // Match input[type=hidden][name=authorizedIDX] - matching reference
     final patterns = [
@@ -534,16 +805,42 @@ class VtopService {
   List<Semester> _parseSemesters(String html) {
     final semesters = <Semester>[];
     
-    // Parse option tags for semester dropdown
-    final pattern = RegExp(r'<option\s+value="([^"]+)"[^>]*>([^<]+)</option>');
-    final matches = pattern.allMatches(html);
+    // First find the semesterSubId select element - matching reference selector
+    // select[name="semesterSubId"] option
+    final selectPattern = RegExp(
+      r'''<select[^>]*name=["']semesterSubId["'][^>]*>(.*?)</select>''',
+      dotAll: true,
+      caseSensitive: false,
+    );
+    
+    final selectMatch = selectPattern.firstMatch(html);
+    final selectHtml = selectMatch?.group(1) ?? html;
+    
+    // Parse option tags from the select element
+    final optionPattern = RegExp(
+      r'''<option\s+value=["']([^"']+)["'][^>]*>([^<]+)</option>''',
+      caseSensitive: false,
+    );
+    final matches = optionPattern.allMatches(selectHtml);
     
     for (final match in matches) {
       final id = match.group(1)?.trim() ?? '';
-      final name = match.group(2)?.trim() ?? '';
-      if (id.isNotEmpty && name.isNotEmpty && id != '0') {
-        semesters.add(Semester(id: id, name: name));
+      var name = match.group(2)?.trim() ?? '';
+      
+      // Skip empty or default options
+      if (id.isEmpty || name.isEmpty || id == '0' || name.toLowerCase().contains('select')) {
+        continue;
       }
+      
+      // Clean up name - remove "- AMR" suffix as per reference
+      name = name.replaceAll('- AMR', '').trim();
+      
+      semesters.add(Semester(id: id, name: name));
+    }
+    
+    print('VtopService: Parsed ${semesters.length} semesters');
+    for (final sem in semesters) {
+      print('  - ${sem.id}: ${sem.name}');
     }
     
     return semesters;
@@ -611,33 +908,45 @@ class VtopService {
   List<AttendanceCourse> _parseAttendance(String html) {
     final courses = <AttendanceCourse>[];
     
-    // Parse attendance table
+    // Parse attendance table - matching reference parser
+    // Reference: cells order is serial, category, course_name, course_code, faculty_detail, 
+    // classes_attended, total_classes, attendance_percentage, attendence_fat_cat, debar_status
     final rowPattern = RegExp(r'<tr[^>]*>(.*?)</tr>', dotAll: true);
     final cellPattern = RegExp(r'<td[^>]*>(.*?)</td>', dotAll: true);
     
-    final rows = rowPattern.allMatches(html).toList();
+    final rows = rowPattern.allMatches(html).skip(1).toList(); // Skip header row
     
     for (final row in rows) {
       final cells = cellPattern.allMatches(row.group(1) ?? '').toList();
-      if (cells.length < 8) continue;
       
-      final courseCode = _stripHtml(cells[1].group(1) ?? '').trim();
-      if (courseCode.isEmpty || !RegExp(r'[A-Z]{3}\d{3,4}').hasMatch(courseCode)) continue;
+      // Reference checks cells.len() > 9 (at least 10 cells)
+      if (cells.length < 9) continue;
       
       try {
-        final totalStr = _stripHtml(cells[5].group(1) ?? '').trim();
-        final attendedStr = _stripHtml(cells[6].group(1) ?? '').trim();
+        // Extract cell values
+        final serial = _stripHtml(cells[0].group(1) ?? '').trim();
+        final category = _stripHtml(cells[1].group(1) ?? '').trim();
+        final courseName = _stripHtml(cells[2].group(1) ?? '').trim();
+        final courseCode = _stripHtml(cells[3].group(1) ?? '').trim();
+        final faculty = _stripHtml(cells[4].group(1) ?? '').trim();
+        final attendedStr = _stripHtml(cells[5].group(1) ?? '').trim();
+        final totalStr = _stripHtml(cells[6].group(1) ?? '').trim();
         final percentStr = _stripHtml(cells[7].group(1) ?? '').trim();
         
-        final total = int.tryParse(totalStr) ?? 0;
+        // Skip if course code doesn't look like a course code
+        if (courseCode.isEmpty || !RegExp(r'[A-Z]{2,4}\d{3,4}').hasMatch(courseCode)) {
+          continue;
+        }
+        
         final attended = int.tryParse(attendedStr) ?? 0;
+        final total = int.tryParse(totalStr) ?? 0;
         final percent = double.tryParse(percentStr.replaceAll('%', '')) ?? 0.0;
         
         courses.add(AttendanceCourse(
           courseCode: courseCode,
-          courseName: _stripHtml(cells[2].group(1) ?? '').trim(),
-          courseType: _stripHtml(cells[3].group(1) ?? '').trim(),
-          faculty: _stripHtml(cells[4].group(1) ?? '').trim(),
+          courseName: courseName,
+          courseType: category,
+          faculty: faculty,
           slot: '',
           totalClasses: total,
           attendedClasses: attended,
@@ -648,6 +957,8 @@ class VtopService {
         continue;
       }
     }
+    
+    print('VtopService: Parsed ${courses.length} attendance courses');
     
     return courses;
   }
@@ -792,4 +1103,12 @@ class _PageResult {
   final String? captchaData;
   
   _PageResult({required this.success, this.message, this.captchaData});
+}
+
+/// Simple HTTP response container
+class _HttpResponse {
+  final int statusCode;
+  final String body;
+  
+  _HttpResponse({required this.statusCode, required this.body});
 }
