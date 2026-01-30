@@ -7,7 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 class UpdateService {
   static const String githubOwner = 'notsachin07';
   static const String githubRepo = 'VitPlus';
-  static const String currentVersion = '2.3.0'; // Update this with each release
+  static const String currentVersion = '2.1.2'; // Update this with each release
   
   static String get releasesApiUrl =>
       'https://api.github.com/repos/$githubOwner/$githubRepo/releases/latest';
