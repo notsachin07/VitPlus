@@ -1,19 +1,14 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:webview_windows/webview_windows.dart';
+import 'package:http/http.dart' as http;
 import '../services/storage_service.dart';
-import '../providers/vtop_provider.dart';
-import '../services/vtop_service.dart';
 
 // Provider for VTOP fullscreen mode - default to true (always fullscreen)
 final vtopFullscreenProvider = StateProvider<bool>((ref) => true);
 
-/// VTOP Screen - Based on vitap-mate webview implementation
-/// Key improvements:
-/// 1. Verify authentication before loading webview
-/// 2. Proper cookie injection via WebView2 addScriptToExecuteOnDocumentCreated
-/// 3. Use /vtop/content? URL after auth (like vitap-mate)
-/// 4. Better error detection and session recovery
 class VtopScreen extends ConsumerStatefulWidget {
   const VtopScreen({super.key});
 
@@ -27,276 +22,548 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
   
   bool _isLoading = true;
   bool _isInitialized = false;
-  bool _isSettingUp = true;
+  bool _isAutoLogging = false;
   String _statusMessage = 'Initializing...';
   bool _showControls = false;
   bool _hasError = false;
-  String? _currentCookie;
+  bool _autoLoginAttempted = false;
+  int _captchaRetryCount = 0;
+  static const int _maxCaptchaRetries = 10;
   
-  // VTOP URLs - Based on vitap-mate implementation
-  static const String vtopBase = 'https://vtop.vitap.ac.in';
-  static const String vtopContent = 'https://vtop.vitap.ac.in/vtop/content?';
+  // Captcha solver URL (same as used in vtop_service)
+  static const String captchaSolverUrl = 'https://cap.va.synaptic.gg/captcha';
+  
+  // VTOP URLs
   static const String vtopLogin = 'https://vtop.vitap.ac.in/vtop/open/page';
+  static const String vtopContent = 'https://vtop.vitap.ac.in/vtop/content';
 
   @override
   void initState() {
     super.initState();
-    _setupVtop();
+    _initWebView();
   }
 
-  /// Main setup flow - similar to vitap-mate's approach
-  /// 1. First verify we have valid auth
-  /// 2. Then initialize webview with cookies
-  /// 3. Load the content page
-  Future<void> _setupVtop() async {
-    if (!mounted) return;
-    
-    setState(() {
-      _isSettingUp = true;
-      _hasError = false;
-      _statusMessage = 'Checking authentication...';
-    });
-
+  Future<void> _initWebView() async {
     try {
-      // Step 1: Check if we have credentials
-      final creds = await _storage.getVtopCredentials();
-      if (creds == null || creds['username']?.isEmpty == true || creds['password']?.isEmpty == true) {
-        // No credentials - just show login page
-        await _initWebViewAndLoad(vtopLogin, null);
-        return;
-      }
+      debugPrint('[VTOP] Initializing WebView...');
+      await _webviewController.initialize();
+      
+      // Listen for URL changes
+      _webviewController.url.listen((url) {
+        if (!mounted) return;
+        _onUrlChanged(url);
+      });
 
-      // Step 2: Try to get a valid session
-      if (!mounted) return;
-      setState(() => _statusMessage = 'Authenticating...');
-      
-      // Check existing session first
-      var session = await _storage.getVtopSession();
-      bool needsLogin = true;
-      
-      if (session != null && session['cookie'] != null && session['cookie']!.isNotEmpty) {
-        // Verify if session is still valid
+      // Listen for loading state
+      _webviewController.loadingState.listen((state) {
         if (!mounted) return;
-        setState(() => _statusMessage = 'Verifying session...');
-        
-        final vtopService = VtopService();
-        vtopService.setCookie(session['cookie']!);
-        
-        // Try to validate session by making a request
-        final isValid = await vtopService.validateSession();
-        if (isValid) {
-          _currentCookie = session['cookie'];
-          needsLogin = false;
-        }
-      }
-      
-      // Step 3: If no valid session, perform fresh login
-      if (needsLogin) {
-        if (!mounted) return;
-        setState(() => _statusMessage = 'Logging in...');
-        
-        final success = await ref.read(vtopProvider.notifier).login();
-        if (success) {
-          final newSession = await _storage.getVtopSession();
-          if (newSession != null && newSession['cookie'] != null) {
-            _currentCookie = newSession['cookie'];
-          }
-        }
-      }
-      
-      // Step 4: Initialize webview with cookie and load content
-      if (_currentCookie != null && _currentCookie!.isNotEmpty) {
-        if (!mounted) return;
-        setState(() => _statusMessage = 'Loading VTOP...');
-        await _initWebViewAndLoad(vtopContent, _currentCookie);
-      } else {
-        // Auth failed - show login page
-        await _initWebViewAndLoad(vtopLogin, null);
-      }
-      
-    } catch (e) {
-      debugPrint('VTOP setup error: $e');
-      // On error, try to show login page
-      try {
-        await _initWebViewAndLoad(vtopLogin, null);
-      } catch (e2) {
-        if (!mounted) return;
+        final wasLoading = _isLoading;
         setState(() {
-          _hasError = true;
-          _isSettingUp = false;
-          _statusMessage = 'Failed to load VTOP';
+          _isLoading = state == LoadingState.loading;
         });
-      }
-    }
-  }
-
-  /// Initialize WebView and load URL with optional cookie injection
-  Future<void> _initWebViewAndLoad(String url, String? cookie) async {
-    try {
-      if (!_isInitialized) {
-        await _webviewController.initialize();
         
-        // Listen for URL changes
-        _webviewController.url.listen((newUrl) {
-          if (!mounted) return;
-          _onUrlChanged(newUrl);
-        });
-
-        // Listen for loading state
-        _webviewController.loadingState.listen((state) {
-          if (!mounted) return;
-          setState(() {
-            _isLoading = state == LoadingState.loading;
-          });
-        });
-
-        // Listen for web errors but handle them gracefully
-        // WebErrorStatus is an enum, just log it
-        _webviewController.onLoadError.listen((errorStatus) {
-          if (!mounted) return;
-          // Only log errors, don't retry automatically
-          // These can be transient network issues
-          debugPrint('WebView load event: $errorStatus');
-        });
-
-        _isInitialized = true;
-      }
-
-      // If we have a cookie, inject it before loading
-      if (cookie != null && cookie.isNotEmpty) {
-        await _injectCookieScript(cookie);
-      }
-
-      // Load the URL
-      await _webviewController.loadUrl(url);
-      
-      if (!mounted) return;
-      setState(() {
-        _isSettingUp = false;
-        _hasError = false;
+        // When page finishes loading, check if we should auto-login
+        if (wasLoading && !_isLoading) {
+          _onPageLoaded();
+        }
       });
+
+      // Listen for web errors
+      _webviewController.onLoadError.listen((errorStatus) {
+        if (!mounted) return;
+        debugPrint('[VTOP] WebView error: $errorStatus');
+      });
+
+      if (mounted) {
+        setState(() {
+          _isInitialized = true;
+        });
+      }
+
+      // Load the login page
+      debugPrint('[VTOP] Loading login page: $vtopLogin');
+      await _webviewController.loadUrl(vtopLogin);
       
     } catch (e) {
-      debugPrint('WebView init error: $e');
-      if (!mounted) return;
-      setState(() {
-        _hasError = true;
-        _isSettingUp = false;
-        _statusMessage = 'Failed to initialize';
-      });
-    }
-  }
-
-  /// Inject cookie via script that runs on document created
-  /// This is more reliable than injecting after page load
-  Future<void> _injectCookieScript(String cookie) async {
-    // Parse cookies and create injection script
-    final cookies = cookie.split('; ');
-    final cookieStatements = <String>[];
-    
-    for (final c in cookies) {
-      if (c.contains('=')) {
-        final parts = c.split('=');
-        if (parts.length >= 2) {
-          final name = parts[0].trim();
-          final value = parts.sublist(1).join('=').trim();
-          // Set cookie with proper domain and path
-          cookieStatements.add(
-            'document.cookie = "$name=$value; path=/; domain=.vitap.ac.in; secure; SameSite=None";'
-          );
-        }
+      debugPrint('[VTOP] WebView initialization error: $e');
+      if (mounted) {
+        setState(() {
+          _isInitialized = false;
+          _hasError = true;
+          _statusMessage = 'Failed to initialize WebView';
+        });
       }
     }
-    
-    if (cookieStatements.isNotEmpty) {
-      final script = '''
-        (function() {
-          ${cookieStatements.join('\n          ')}
-        })();
-      ''';
-      
-      // First load the base domain to set cookies in the right context
-      await _webviewController.loadUrl(vtopBase);
-      await Future.delayed(const Duration(milliseconds: 500));
-      
-      // Execute the cookie injection script
-      await _webviewController.executeScript(script);
-      await Future.delayed(const Duration(milliseconds: 300));
-    }
   }
 
-  /// Handle URL changes - detect errors and valid pages
   void _onUrlChanged(String url) {
+    debugPrint('[VTOP] URL changed: $url');
     final urlLower = url.toLowerCase();
     
-    // Check for successful navigation to VTOP pages
+    // Check if we reached the dashboard/content page (login successful)
     if (urlLower.contains('/vtop/content') ||
         urlLower.contains('/vtop/initialpage') ||
         urlLower.contains('/vtop/academics') ||
         urlLower.contains('/vtop/examinations') ||
         urlLower.contains('/vtop/studentsrecord')) {
+      debugPrint('[VTOP] Successfully logged in! Dashboard detected.');
       setState(() {
+        _isAutoLogging = false;
         _hasError = false;
+        _captchaRetryCount = 0;
       });
     }
     
-    // Check if redirected to login page (session expired)
-    if (urlLower.contains('/vtop/open/page') || urlLower.contains('/vtop/login')) {
-      // Session may have expired - user can login manually or click re-login
-      debugPrint('Redirected to login page - session may have expired');
+    // Reset auto-login flag when on login page (allows retry)
+    if (urlLower.contains('/vtop/open/page')) {
+      // Only reset if not currently auto-logging
+      if (!_isAutoLogging) {
+        _autoLoginAttempted = false;
+      }
     }
   }
 
-  /// Retry loading with fresh login
-  Future<void> _retryWithFreshLogin() async {
+  Future<void> _onPageLoaded() async {
     if (!mounted) return;
     
+    // Small delay to ensure page is fully rendered
+    await Future.delayed(const Duration(milliseconds: 500));
+    
+    // Get current URL
+    final currentUrl = await _webviewController.executeScript('window.location.href');
+    final url = currentUrl?.toString().toLowerCase() ?? '';
+    
+    debugPrint('[VTOP] Page loaded: $url');
+    
+    // Check if we're on any login page
+    final isLoginPage = url.contains('/vtop/open/page') || url.contains('/vtop/login');
+    
+    if (isLoginPage && !_autoLoginAttempted) {
+      // First check if login form with captcha is already present
+      final hasLoginForm = await _checkLoginFormPresent();
+      debugPrint('[VTOP] Login form present: $hasLoginForm');
+      
+      if (hasLoginForm) {
+        debugPrint('[VTOP] Login form detected, attempting auto-login...');
+        await _attemptAutoLogin();
+      } else {
+        // Login form not present - try to click VTOP login button first
+        debugPrint('[VTOP] Login form not present, looking for VTOP button...');
+        final clickedVtop = await _clickVtopLoginButton();
+        debugPrint('[VTOP] Clicked VTOP button: $clickedVtop');
+        
+        if (clickedVtop) {
+          // Wait for the login form to load via AJAX
+          debugPrint('[VTOP] Waiting for login form to load...');
+          await _waitForLoginFormAndLogin();
+        }
+      }
+    }
+  }
+
+  /// Wait for login form to appear after clicking VTOP button, then auto-login
+  Future<void> _waitForLoginFormAndLogin() async {
+    // Poll for login form to appear (AJAX content loading)
+    for (int i = 0; i < 20; i++) {
+      await Future.delayed(const Duration(milliseconds: 500));
+      
+      if (!mounted) return;
+      
+      final hasForm = await _checkLoginFormPresent();
+      debugPrint('[VTOP] Checking for form (attempt ${i + 1}): $hasForm');
+      
+      if (hasForm) {
+        debugPrint('[VTOP] Login form appeared, starting auto-login...');
+        await _attemptAutoLogin();
+        return;
+      }
+    }
+    
+    debugPrint('[VTOP] Login form did not appear after waiting');
+  }
+
+  /// Try to click the VTOP login button on the initial page
+  Future<bool> _clickVtopLoginButton() async {
+    try {
+      final result = await _webviewController.executeScript('''
+        (function() {
+          // Look for VTOP login button/link
+          var vtopBtn = document.querySelector('a[onclick*="VTOP"]') ||
+                       document.querySelector('button[onclick*="VTOP"]') ||
+                       document.querySelector('[data-flag="VTOP"]') ||
+                       document.querySelector('a[href*="VTOP"]') ||
+                       document.querySelector('.btn-primary[onclick]') ||
+                       document.querySelector('button.btn-primary');
+          
+          // Also try finding by text content
+          if (!vtopBtn) {
+            var allLinks = document.querySelectorAll('a, button');
+            for (var i = 0; i < allLinks.length; i++) {
+              var text = allLinks[i].textContent || allLinks[i].innerText || '';
+              if (text.toLowerCase().includes('vtop') || text.toLowerCase().includes('login')) {
+                vtopBtn = allLinks[i];
+                break;
+              }
+            }
+          }
+          
+          if (vtopBtn) {
+            console.log('Found VTOP button:', vtopBtn.outerHTML);
+            vtopBtn.click();
+            return 'clicked';
+          }
+          
+          // Debug: list what's on the page
+          var buttons = document.querySelectorAll('button, a.btn, input[type="submit"]');
+          var btnList = [];
+          for (var i = 0; i < buttons.length && i < 10; i++) {
+            btnList.push(buttons[i].outerHTML.substring(0, 100));
+          }
+          return 'no button found. Buttons: ' + btnList.join(' | ');
+        })();
+      ''');
+      debugPrint('[VTOP] Click VTOP button result: $result');
+      return result == 'clicked';
+    } catch (e) {
+      debugPrint('[VTOP] Error clicking VTOP button: $e');
+      return false;
+    }
+  }
+
+  Future<bool> _checkLoginFormPresent() async {
+    try {
+      // First get debug info about what's on the page
+      final debugInfo = await _webviewController.executeScript('''
+        (function() {
+          var inputs = document.querySelectorAll('input');
+          var inputInfo = [];
+          for (var i = 0; i < inputs.length; i++) {
+            inputInfo.push(inputs[i].name || inputs[i].id || inputs[i].type);
+          }
+          var imgs = document.querySelectorAll('img');
+          var hasBase64Img = false;
+          for (var i = 0; i < imgs.length; i++) {
+            if (imgs[i].src && imgs[i].src.includes('base64')) {
+              hasBase64Img = true;
+              break;
+            }
+          }
+          return 'inputs:[' + inputInfo.join(',') + '] base64img:' + hasBase64Img;
+        })();
+      ''');
+      debugPrint('[VTOP] Page elements: $debugInfo');
+      
+      final result = await _webviewController.executeScript('''
+        (function() {
+          // Look for captcha image with multiple selectors
+          var captchaImg = document.querySelector('img[src*="base64"]') || 
+                          document.getElementById('captchaImg') ||
+                          document.querySelector('img.captcha') ||
+                          document.querySelector('.form-control.img-fluid');
+          
+          // Look for username field with multiple selectors
+          var usernameField = document.querySelector('input[name="uname"]') || 
+                             document.getElementById('uname') ||
+                             document.querySelector('input[name="username"]') ||
+                             document.querySelector('input[type="text"][id*="user"]') ||
+                             document.querySelector('input[placeholder*="user" i]');
+          
+          // Look for password field as alternative indicator
+          var passwordField = document.querySelector('input[type="password"]') ||
+                             document.querySelector('input[name="passwd"]');
+          
+          // Form is present if we have either (captcha + username) or (username + password)
+          var hasForm = (captchaImg && usernameField) || (usernameField && passwordField);
+          
+          return hasForm ? 'true' : 'false';
+        })();
+      ''');
+      return result == 'true';
+    } catch (e) {
+      debugPrint('[VTOP] Error checking login form: $e');
+      return false;
+    }
+  }
+
+  Future<void> _attemptAutoLogin() async {
+    if (!mounted || _isAutoLogging) return;
+    
+    // Check if we have credentials
+    final creds = await _storage.getVtopCredentials();
+    if (creds == null || creds['username']?.isEmpty == true || creds['password']?.isEmpty == true) {
+      debugPrint('[VTOP] No credentials saved, user must login manually');
+      return;
+    }
+    
+    _autoLoginAttempted = true;
+    
     setState(() {
-      _isSettingUp = true;
-      _hasError = false;
-      _statusMessage = 'Re-authenticating...';
+      _isAutoLogging = true;
+      _statusMessage = 'Auto-logging in...';
     });
 
     try {
-      // Force a new login
-      final success = await ref.read(vtopProvider.notifier).login();
+      final username = creds['username']!;
+      final password = creds['password']!;
       
-      if (success) {
-        final newSession = await _storage.getVtopSession();
-        if (newSession != null && newSession['cookie'] != null) {
-          _currentCookie = newSession['cookie'];
-          
-          if (!mounted) return;
-          setState(() => _statusMessage = 'Reloading VTOP...');
-          
-          // Re-inject cookies and reload
-          await _injectCookieScript(_currentCookie!);
-          await _webviewController.loadUrl(vtopContent);
-        }
-      } else {
-        // Login failed, load login page
-        await _webviewController.loadUrl(vtopLogin);
+      debugPrint('[VTOP] Getting captcha image...');
+      
+      // Get captcha image from WebView
+      final captchaBase64 = await _getCaptchaFromWebView();
+      if (captchaBase64 == null || captchaBase64.isEmpty) {
+        debugPrint('[VTOP] Could not get captcha image');
+        setState(() {
+          _isAutoLogging = false;
+        });
+        return;
       }
       
+      debugPrint('[VTOP] Got captcha (${captchaBase64.length} chars), solving...');
+      setState(() => _statusMessage = 'Solving captcha...');
+      
+      // Solve captcha
+      final captchaSolution = await _solveCaptcha(captchaBase64);
+      if (captchaSolution == null) {
+        debugPrint('[VTOP] Captcha solving failed, user must login manually');
+        setState(() {
+          _isAutoLogging = false;
+        });
+        return;
+      }
+      
+      debugPrint('[VTOP] Captcha solved: $captchaSolution');
+      debugPrint('[VTOP] Filling login form...');
+      setState(() => _statusMessage = 'Logging in...');
+      
+      // Fill the form and submit
+      await _fillAndSubmitLoginForm(username, password, captchaSolution);
+      
+      // Wait a moment then check if login was successful
+      await Future.delayed(const Duration(seconds: 3));
+      
       if (!mounted) return;
-      setState(() {
-        _isSettingUp = false;
-        _hasError = false;
-      });
+      
+      final newUrl = await _webviewController.executeScript('window.location.href');
+      debugPrint('[VTOP] After login, URL: $newUrl');
+      
+      final newUrlStr = newUrl?.toString().toLowerCase() ?? '';
+      
+      if (!newUrlStr.contains('/vtop/open/page') && !newUrlStr.contains('/vtop/login')) {
+        debugPrint('[VTOP] Login successful!');
+        setState(() {
+          _isAutoLogging = false;
+          _captchaRetryCount = 0;
+        });
+      } else {
+        // Check if there's an error message (wrong captcha, etc.)
+        final errorMsg = await _webviewController.executeScript('''
+          (function() {
+            var alert = document.querySelector('.alert-danger, .alert-warning, .error, [class*="error"]');
+            if (alert) return alert.textContent || alert.innerText;
+            // Also check for any visible error text
+            var body = document.body.innerText || '';
+            if (body.toLowerCase().includes('invalid') || body.toLowerCase().includes('captcha')) {
+              return 'captcha error detected';
+            }
+            return '';
+          })();
+        ''');
+        
+        debugPrint('[VTOP] Error message: $errorMsg');
+        
+        // If captcha was wrong, retry (up to max retries)
+        _captchaRetryCount++;
+        if (_captchaRetryCount < _maxCaptchaRetries) {
+          debugPrint('[VTOP] Retrying login (attempt ${_captchaRetryCount + 1}/$_maxCaptchaRetries)...');
+          _autoLoginAttempted = false;
+          setState(() => _isAutoLogging = false);
+          
+          // Reload the page to get new captcha
+          await _webviewController.reload();
+        } else {
+          debugPrint('[VTOP] Max retries reached, user must login manually');
+          setState(() {
+            _isAutoLogging = false;
+            _captchaRetryCount = 0;
+          });
+        }
+      }
+      
     } catch (e) {
-      debugPrint('Retry login error: $e');
-      if (!mounted) return;
+      debugPrint('[VTOP] Auto-login error: $e');
       setState(() {
-        _isSettingUp = false;
-        _hasError = true;
-        _statusMessage = 'Login failed';
+        _isAutoLogging = false;
       });
     }
+  }
+
+  Future<String?> _getCaptchaFromWebView() async {
+    try {
+      // Try multiple selectors for captcha image
+      final result = await _webviewController.executeScript('''
+        (function() {
+          // Try to find captcha image
+          var img = document.querySelector('img[src*="base64"]');
+          if (!img) img = document.getElementById('captchaImg');
+          if (!img) img = document.querySelector('img.captcha');
+          if (!img) img = document.querySelector('img[alt*="captcha" i]');
+          if (!img) img = document.querySelector('.form-control.img-fluid');
+          
+          if (img && img.src && img.src.includes('base64')) {
+            // Return just the base64 data part, cleaned
+            var src = img.src;
+            var base64Index = src.indexOf('base64,');
+            if (base64Index !== -1) {
+              var base64Data = src.substring(base64Index + 7);
+              // Clean up any whitespace or newlines
+              base64Data = base64Data.replace(/\\s/g, '');
+              return base64Data;
+            }
+          }
+          return '';
+        })();
+      ''');
+      
+      if (result != null && result.toString().isNotEmpty && result.toString() != 'null') {
+        // Clean the result - remove any quotes or extra characters
+        String cleanedResult = result.toString().trim();
+        // Remove surrounding quotes if present
+        if (cleanedResult.startsWith('"') && cleanedResult.endsWith('"')) {
+          cleanedResult = cleanedResult.substring(1, cleanedResult.length - 1);
+        }
+        if (cleanedResult.startsWith("'") && cleanedResult.endsWith("'")) {
+          cleanedResult = cleanedResult.substring(1, cleanedResult.length - 1);
+        }
+        debugPrint('[VTOP] Captcha base64 first 50 chars: ${cleanedResult.substring(0, cleanedResult.length > 50 ? 50 : cleanedResult.length)}');
+        return cleanedResult;
+      }
+      return null;
+    } catch (e) {
+      debugPrint('[VTOP] Error getting captcha: $e');
+      return null;
+    }
+  }
+
+  Future<String?> _solveCaptcha(String base64Data) async {
+    try {
+      final response = await http.post(
+        Uri.parse(captchaSolverUrl),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'imgstring': base64Data}),
+      ).timeout(const Duration(seconds: 10));
+      
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['result'] != null) {
+          return data['result'].toString();
+        }
+      }
+      debugPrint('[VTOP] Captcha API response: ${response.statusCode} - ${response.body}');
+      return null;
+    } catch (e) {
+      debugPrint('[VTOP] Captcha solver error: $e');
+      return null;
+    }
+  }
+
+  Future<void> _fillAndSubmitLoginForm(String username, String password, String captcha) async {
+    // Escape special characters in password for JavaScript
+    final escapedPassword = password
+        .replaceAll('\\', '\\\\')
+        .replaceAll("'", "\\'")
+        .replaceAll('"', '\\"');
+    
+    // Fill the login form using JavaScript
+    final fillResult = await _webviewController.executeScript('''
+      (function() {
+        var results = [];
+        
+        // Find and fill username field
+        var unameField = document.querySelector('input[name="uname"]') || document.getElementById('uname');
+        if (unameField) {
+          unameField.value = '$username';
+          unameField.dispatchEvent(new Event('input', { bubbles: true }));
+          unameField.dispatchEvent(new Event('change', { bubbles: true }));
+          results.push('username:ok');
+        } else {
+          results.push('username:not found');
+        }
+        
+        // Find and fill password field
+        var passField = document.querySelector('input[name="passwd"]') || 
+                        document.querySelector('input[type="password"]') ||
+                        document.getElementById('passwd');
+        if (passField) {
+          passField.value = '$escapedPassword';
+          passField.dispatchEvent(new Event('input', { bubbles: true }));
+          passField.dispatchEvent(new Event('change', { bubbles: true }));
+          results.push('password:ok');
+        } else {
+          results.push('password:not found');
+        }
+        
+        // Find and fill captcha field
+        var captchaField = document.querySelector('input[name="captchaCheck"]') ||
+                          document.querySelector('input[name="captcha"]') ||
+                          document.getElementById('captchaCheck') ||
+                          document.querySelector('input[placeholder*="captcha" i]');
+        if (captchaField) {
+          captchaField.value = '$captcha';
+          captchaField.dispatchEvent(new Event('input', { bubbles: true }));
+          captchaField.dispatchEvent(new Event('change', { bubbles: true }));
+          results.push('captcha:ok');
+        } else {
+          results.push('captcha:not found');
+        }
+        
+        return results.join(', ');
+      })();
+    ''');
+    
+    debugPrint('[VTOP] Form fill result: $fillResult');
+    
+    // Small delay to ensure form is filled
+    await Future.delayed(const Duration(milliseconds: 500));
+    
+    // Submit the form
+    final submitResult = await _webviewController.executeScript('''
+      (function() {
+        // Try to find and click the submit button
+        var submitBtn = document.querySelector('button[type="submit"]') ||
+                       document.querySelector('input[type="submit"]') ||
+                       document.getElementById('submitBtn') ||
+                       document.querySelector('button[id*="login" i]') ||
+                       document.querySelector('button.btn-primary') ||
+                       document.querySelector('#loginBtn') ||
+                       document.querySelector('[onclick*="submit"]');
+        
+        if (submitBtn) {
+          submitBtn.click();
+          return 'clicked button';
+        } else {
+          // Try submitting the form directly
+          var form = document.querySelector('form') || document.getElementById('loginForm');
+          if (form) {
+            form.submit();
+            return 'submitted form';
+          }
+        }
+        return 'no submit found';
+      })();
+    ''');
+    
+    debugPrint('[VTOP] Submit result: $submitResult');
   }
 
   void _toggleFullscreen() {
     final isFullscreen = ref.read(vtopFullscreenProvider);
     ref.read(vtopFullscreenProvider.notifier).state = !isFullscreen;
+  }
+
+  void _retryAutoLogin() {
+    _autoLoginAttempted = false;
+    _captchaRetryCount = 0;
+    _webviewController.reload();
   }
 
   @override
@@ -315,7 +582,7 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
         child: Stack(
           children: [
             // WebView (full screen)
-            if (_isInitialized && !_isSettingUp)
+            if (_isInitialized)
               Positioned.fill(
                 child: Webview(
                   _webviewController,
@@ -329,12 +596,12 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
             else
               _buildLoadingState(),
             
-            // Setup overlay
-            if (_isSettingUp)
-              _buildSetupOverlay(),
+            // Auto-login overlay
+            if (_isAutoLogging)
+              _buildAutoLoginOverlay(),
             
             // Floating controls (show on hover)
-            if (_showControls && _isInitialized && !_isSettingUp)
+            if (_showControls && _isInitialized && !_isAutoLogging)
               Positioned(
                 top: 0,
                 left: 0,
@@ -383,7 +650,7 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
           ),
           const SizedBox(height: 16),
           ElevatedButton.icon(
-            onPressed: _setupVtop,
+            onPressed: _initWebView,
             icon: const Icon(Icons.refresh),
             label: const Text('Retry'),
           ),
@@ -392,7 +659,7 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
     );
   }
 
-  Widget _buildSetupOverlay() {
+  Widget _buildAutoLoginOverlay() {
     return Container(
       color: Colors.black54,
       child: Center(
@@ -420,6 +687,17 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
                   fontWeight: FontWeight.w500,
                 ),
               ),
+              if (_captchaRetryCount > 0)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    'Attempt ${_captchaRetryCount + 1}/$_maxCaptchaRetries',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
@@ -463,7 +741,7 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
               ),
             ),
           const SizedBox(width: 16),
-          _buildControlButton(Icons.login, _retryWithFreshLogin, label: 'Re-login'),
+          _buildControlButton(Icons.login, _retryAutoLogin, label: 'Re-login'),
         ],
       ),
     );

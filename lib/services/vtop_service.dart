@@ -188,13 +188,27 @@ class VtopService {
   /// Validate if current session is still active
   /// Based on vitap-mate's fetchIsAuth approach - tries to access a protected page
   Future<bool> validateSession() async {
-    if (_cookie == null || _cookie!.isEmpty) return false;
+    print('[VTOP Service] validateSession called');
+    print('[VTOP Service] Cookie: ${_cookie?.isNotEmpty == true ? '${_cookie!.substring(0, _cookie!.length > 50 ? 50 : _cookie!.length)}...' : 'null/empty'}');
+    
+    if (_cookie == null || _cookie!.isEmpty) {
+      print('[VTOP Service] No cookie, returning false');
+      return false;
+    }
     
     try {
       // Try to access the content page - if we get redirected to login, session is invalid
+      print('[VTOP Service] Checking $baseUrl/vtop/content');
       final response = await _doGet('$baseUrl/vtop/content');
       
-      if (response.statusCode >= 400) return false;
+      print('[VTOP Service] Response status: ${response.statusCode}');
+      print('[VTOP Service] Response body length: ${response.body.length}');
+      print('[VTOP Service] Response body preview: ${response.body.length > 500 ? response.body.substring(0, 500) : response.body}');
+      
+      if (response.statusCode >= 400) {
+        print('[VTOP Service] Got error status ${response.statusCode}, returning false');
+        return false;
+      }
       
       // Check if we got the actual content page or were redirected to login
       final body = response.body.toLowerCase();
@@ -204,6 +218,16 @@ class VtopService {
           body.contains('id="loginbutton"') ||
           body.contains('id="captchaimg"') ||
           body.contains('/vtop/prelogin/')) {
+        print('[VTOP Service] Found login form elements, session expired');
+        return false;
+      }
+      
+      // Check for 404/error page indicators
+      if (body.contains('http status 404') ||
+          body.contains('not found') ||
+          body.contains('apache tomcat') ||
+          body.contains('status report')) {
+        print('[VTOP Service] Found 404/error page indicators, session invalid');
         return false;
       }
       
@@ -213,12 +237,15 @@ class VtopService {
           body.contains('logout') ||
           body.contains('academics/') ||
           body.contains('studentname')) {
+        print('[VTOP Service] Found dashboard elements, session valid');
         return true;
       }
       
       // Ambiguous - assume valid if we got 200 OK
+      print('[VTOP Service] Ambiguous response, assuming valid (status 200)');
       return response.statusCode == 200;
     } catch (e) {
+      print('[VTOP Service] validateSession error: $e');
       return false;
     }
   }
