@@ -3,8 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/vtop_provider.dart';
 import '../models/vtop_models.dart';
 import '../theme/app_theme.dart';
-import '../widgets/marks/marks_card.dart';
-import '../widgets/marks/marks_colors.dart';
 
 class MarksScreen extends ConsumerStatefulWidget {
   const MarksScreen({super.key});
@@ -112,20 +110,16 @@ class _MarksScreenState extends ConsumerState<MarksScreen> {
       return _buildEmptyState(isDark);
     }
 
-    return RefreshIndicator(
-      onRefresh: () => ref.read(vtopProvider.notifier).fetchMarks(),
-      child: ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: courses.length,
-        itemBuilder: (context, index) {
-          return MarksCard(course: courses[index]);
-        },
-      ),
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: courses.length,
+      itemBuilder: (context, index) {
+        return _buildCourseMarksCard(isDark, courses[index]);
+      },
     );
   }
 
-  // Old card builder - kept for reference
-  Widget _buildOldCourseMarksCard(bool isDark, CourseMarks course) {
+  Widget _buildCourseMarksCard(bool isDark, CourseMarks course) {
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(

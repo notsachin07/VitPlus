@@ -314,6 +314,8 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
         debugPrint('[VTOP] Could not get captcha image');
         setState(() {
           _isAutoLogging = false;
+          _isAutoLoggingIn = false;
+          _statusMessage = 'No credentials saved. Please add in Settings.';
         });
         return;
       }
@@ -340,6 +342,12 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
       
       // Wait a moment then check if login was successful
       await Future.delayed(const Duration(seconds: 3));
+
+      if (!mounted) return;
+      setState(() => _statusMessage = 'Logging in (solving captcha)...');
+
+      // Use the provider to login (which handles captcha solving)
+      final success = await ref.read(vtopProvider.notifier).login();
       
       if (!mounted) return;
       
@@ -354,6 +362,23 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
           _isAutoLogging = false;
           _captchaRetryCount = 0;
         });
+      if (success) {
+        // Get the new session and inject cookies
+        final newSession = await _storage.getVtopSession();
+        if (newSession != null && newSession['cookie'] != null) {
+          // Load base URL first
+          await _webviewController.loadUrl(vtopBase);
+          await Future.delayed(const Duration(milliseconds: 500));
+          
+          if (!mounted) return;
+          
+          // Inject cookies
+          await _injectCookies(newSession['cookie']!);
+        }
+        
+        if (!mounted) return;
+        setState(() => _statusMessage = 'Login successful! Loading VTOP...');
+        await _webviewController.loadUrl(vtopContent);
       } else {
         // Check if there's an error message (wrong captcha, etc.)
         final errorMsg = await _webviewController.executeScript('''
@@ -387,6 +412,12 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
             _captchaRetryCount = 0;
           });
         }
+        if (!mounted) return;
+        setState(() {
+          _isAutoLoggingIn = false;
+          _statusMessage = 'Login failed. Please check credentials.';
+        });
+        await _webviewController.loadUrl(vtopLogin);
       }
       
     } catch (e) {
@@ -564,6 +595,14 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
     _autoLoginAttempted = false;
     _captchaRetryCount = 0;
     _webviewController.reload();
+      debugPrint('Fresh login error: $e');
+      if (!mounted) return;
+      setState(() {
+        _isAutoLoggingIn = false;
+        _statusMessage = 'Login error: $e';
+      });
+      await _webviewController.loadUrl(vtopLogin);
+    }
   }
 
   @override
@@ -631,6 +670,10 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
           Text(
             'Loading VTOP...',
             style: TextStyle(fontSize: 14, color: Colors.black54),
+          _buildHeader(isDark),
+          _buildNavigationBar(isDark),
+          Expanded(
+            child: _buildWebViewContent(isDark),
           ),
         ],
       ),
@@ -641,18 +684,129 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
+  Widget _buildHeader(bool isDark) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      child: Row(
+        children: [
+          Icon(
+            Icons.language,
+            size: 28,
+            color: isDark ? Colors.white : Colors.black87,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _pageTitle,
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: isDark ? Colors.white : Colors.black87,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (_isAutoLoggingIn)
+                  Row(
+                    children: [
+                      SizedBox(
+                        width: 12,
+                        height: 12,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: AppTheme.primaryBlue,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _statusMessage,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppTheme.primaryBlue,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  )
+                else
+                  Text(
+                    _currentUrl,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: isDark ? Colors.white54 : Colors.black45,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+              ],
+            ),
+          ),
+          if (!_isAutoLoggingIn)
+            IconButton(
+              icon: const Icon(Icons.login),
+              onPressed: _tryAutoLogin,
+              tooltip: 'Auto-login',
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNavigationBar(bool isDark) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: isDark ? AppTheme.darkCard : Colors.white,
+        border: Border(
+          bottom: BorderSide(
+            color: isDark ? Colors.white12 : Colors.black12,
+          ),
+        ),
+      ),
+      child: Row(
         children: [
           const Icon(Icons.error_outline, size: 48, color: Colors.red),
           const SizedBox(height: 16),
           Text(
             _statusMessage,
             style: const TextStyle(fontSize: 14, color: Colors.black54),
+          _buildNavButton(
+            icon: Icons.arrow_back,
+            onPressed: () async {
+              await _webviewController.goBack();
+            },
+            isDark: isDark,
+            tooltip: 'Back',
+          ),
+          const SizedBox(width: 8),
+          _buildNavButton(
+            icon: Icons.arrow_forward,
+            onPressed: () async {
+              await _webviewController.goForward();
+            },
+            isDark: isDark,
+            tooltip: 'Forward',
           ),
           const SizedBox(height: 16),
           ElevatedButton.icon(
             onPressed: _initWebView,
             icon: const Icon(Icons.refresh),
             label: const Text('Retry'),
+          const SizedBox(width: 8),
+          _buildNavButton(
+            icon: _isLoading ? Icons.close : Icons.refresh,
+            onPressed: () async {
+              if (_isLoading) {
+                await _webviewController.stop();
+              } else {
+                await _webviewController.reload();
+              }
+            },
+            isDark: isDark,
+            tooltip: _isLoading ? 'Stop' : 'Refresh',
           ),
         ],
       ),
@@ -742,6 +896,22 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
             ),
           const SizedBox(width: 16),
           _buildControlButton(Icons.login, _retryAutoLogin, label: 'Re-login'),
+          const SizedBox(width: 8),
+          _buildNavButton(
+            icon: Icons.home,
+            onPressed: () async {
+              await _webviewController.loadUrl('https://vtop.vitap.ac.in');
+            },
+            isDark: isDark,
+            tooltip: 'Home',
+          ),
+          const Spacer(),
+          if (_isLoading)
+            const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
         ],
       ),
     );
@@ -753,6 +923,8 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
       child: InkWell(
         onTap: onPressed,
         borderRadius: BorderRadius.circular(6),
+        onTap: _isInitialized ? onPressed : null,
+        borderRadius: BorderRadius.circular(8),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
@@ -775,6 +947,17 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
                 ),
               ],
             ],
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: isDark ? Colors.white12 : Colors.black.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(
+            icon,
+            size: 20,
+            color: _isInitialized
+                ? (isDark ? Colors.white70 : Colors.black54)
+                : (isDark ? Colors.white24 : Colors.black26),
           ),
         ),
       ),
@@ -802,6 +985,45 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
             ),
           ),
         ),
+  Widget _buildWebViewContent(bool isDark) {
+    if (!_isInitialized) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 16),
+            Text(
+              'Loading VTOP...',
+              style: TextStyle(
+                fontSize: 16,
+                color: isDark ? Colors.white70 : Colors.black54,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      margin: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Webview(
+        _webviewController,
+        permissionRequested: (url, kind, isUserInitiated) async {
+          return WebviewPermissionDecision.allow;
+        },
       ),
     );
   }

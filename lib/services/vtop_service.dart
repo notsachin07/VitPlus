@@ -322,17 +322,9 @@ class VtopService {
         return loginResult;
       }
       
-      return VtopLoginResult(success: false, message: 'Login failed after $maxAttempts captcha attempts. Please try again.');
+      return VtopLoginResult(success: false, message: 'Failed after $maxAttempts attempts');
     } catch (e) {
-      String errorMsg = e.toString();
-      if (errorMsg.contains('SocketException') || errorMsg.contains('Connection refused')) {
-        return VtopLoginResult(success: false, message: 'Network error: Cannot connect to VTOP server');
-      } else if (errorMsg.contains('TimeoutException')) {
-        return VtopLoginResult(success: false, message: 'Connection timed out. Check your internet connection.');
-      } else if (errorMsg.contains('HandshakeException') || errorMsg.contains('certificate')) {
-        return VtopLoginResult(success: false, message: 'SSL/Security error. Try again later.');
-      }
-      return VtopLoginResult(success: false, message: 'Login error: ${e.runtimeType}');
+      return VtopLoginResult(success: false, message: 'Login error: $e');
     }
   }
   
@@ -1237,27 +1229,33 @@ class VtopService {
   List<AttendanceCourse> _parseAttendance(String html) {
     final courses = <AttendanceCourse>[];
     
-    // Parse attendance table - matching vitap-mate parseattn.rs
-    // Cell indices (0-indexed):
-    // 0: serial, 1: category, 2: courseName, 3: courseCode, 4: faculty
-    // 5: classesAttended, 6: totalClasses, 7: attendancePercentage
-    // 8: fatCatPercentage (between exams), 9: debarStatus
-    // Last cell: contains onclick with courseId and courseType
+    // Parse attendance table - matching reference parser
+    // Reference: The last cell contains onclick with courseId and courseType
     final rowPattern = RegExp(r'<tr[^>]*>(.*?)</tr>', dotAll: true);
     final cellPattern = RegExp(r'<td[^>]*>(.*?)</td>', dotAll: true);
     
-    final rows = rowPattern.allMatches(html).toList();
+    final rows = rowPattern.allMatches(html).skip(1).toList(); // Skip header row
     
     for (final row in rows) {
       final rowHtml = row.group(1) ?? '';
       final cells = cellPattern.allMatches(rowHtml).toList();
       
-      // Need at least 8 cells for a valid attendance row
-      if (cells.length < 8) continue;
+      // Reference checks cells.len() > 9 (at least 10 cells)
+      if (cells.length < 9) continue;
       
       try {
-        // Extract cell values following vitap-mate indices
-        final serial = _stripHtml(cells[0].group(1) ?? '').trim();
+        // Extract courseId and courseType from the last cell's onclick
+        // Format: onclick="...,'courseId','courseType')"
+        String courseId = '';
+        String courseType = '';
+        final lastCellHtml = cells.last.group(0) ?? '';
+        final onclickMatch = RegExp(r"'([^']+)'\s*,\s*'([^']+)'\s*\)").firstMatch(lastCellHtml);
+        if (onclickMatch != null) {
+          courseId = onclickMatch.group(1) ?? '';
+          courseType = onclickMatch.group(2) ?? '';
+        }
+        
+        // Extract cell values
         final category = _stripHtml(cells[1].group(1) ?? '').trim();
         final courseName = _stripHtml(cells[2].group(1) ?? '').trim();
         final courseCode = _stripHtml(cells[3].group(1) ?? '').trim();
@@ -1265,51 +1263,11 @@ class VtopService {
         final attendedStr = _stripHtml(cells[5].group(1) ?? '').trim();
         final totalStr = _stripHtml(cells[6].group(1) ?? '').trim();
         final percentStr = _stripHtml(cells[7].group(1) ?? '').trim();
-        
-        // FAT/CAT percentage (between exams) - may not exist
-        String fatCatPercentage = '-';
-        if (cells.length > 8) {
-          fatCatPercentage = _stripHtml(cells[8].group(1) ?? '').trim();
-          if (fatCatPercentage.isEmpty) fatCatPercentage = '-';
-        }
-        
-        // Debar status
-        String debarStatus = '';
-        if (cells.length > 9) {
-          debarStatus = _stripHtml(cells[9].group(1) ?? '').trim();
-        }
-        
-        // Skip header rows or invalid rows
-        if (serial.toLowerCase() == 'sl.no' || serial.toLowerCase() == 'serial') continue;
+        final debarStatus = cells.length > 9 ? _stripHtml(cells[9].group(1) ?? '').trim() : '';
         
         // Skip if course code doesn't look like a course code
         if (courseCode.isEmpty || !RegExp(r'[A-Z]{2,4}\d{3,4}').hasMatch(courseCode)) {
           continue;
-        }
-        
-        // Extract courseId and courseType from the last cell's onclick
-        // Format: onclick="...,'courseId','courseType')"
-        String courseId = '';
-        String courseType = '';
-        final lastCellHtml = cells.last.group(0) ?? '';
-        
-        // Try multiple onclick patterns
-        var onclickMatch = RegExp(r"'([^']+)'\s*,\s*'([^']+)'\s*\)").firstMatch(lastCellHtml);
-        if (onclickMatch != null) {
-          courseId = onclickMatch.group(1) ?? '';
-          courseType = onclickMatch.group(2) ?? '';
-        } else {
-          // Try another pattern: infocell[2] and infocell[3]
-          final splitMatch = RegExp(r',\s*([^,\)]+)\s*,\s*([^,\)]+)\s*\)').firstMatch(lastCellHtml);
-          if (splitMatch != null) {
-            courseId = splitMatch.group(1)?.replaceAll("'", '').trim() ?? '';
-            courseType = splitMatch.group(2)?.replaceAll("'", '').replaceAll(')', '').trim() ?? '';
-          }
-        }
-        
-        // If courseType not found from onclick, use category
-        if (courseType.isEmpty) {
-          courseType = category;
         }
         
         final attended = int.tryParse(attendedStr) ?? 0;
@@ -1319,14 +1277,13 @@ class VtopService {
         courses.add(AttendanceCourse(
           courseCode: courseCode,
           courseName: courseName,
-          courseType: courseType,
+          courseType: courseType.isNotEmpty ? courseType : category,
           faculty: faculty,
           slot: '',
           totalClasses: total,
           attendedClasses: attended,
           absentClasses: total - attended,
           percentage: percent,
-          fatCatPercentage: fatCatPercentage,
           courseId: courseId,
           category: category,
           debarStatus: debarStatus,

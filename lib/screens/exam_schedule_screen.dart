@@ -3,8 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/vtop_provider.dart';
 import '../models/vtop_models.dart';
 import '../theme/app_theme.dart';
-import '../widgets/exam/exam_card.dart';
-import '../widgets/exam/exam_colors.dart';
 
 class ExamScheduleScreen extends ConsumerStatefulWidget {
   const ExamScheduleScreen({super.key});
@@ -112,16 +110,13 @@ class _ExamScheduleScreenState extends ConsumerState<ExamScheduleScreen> {
       return _buildNoExamsState(isDark);
     }
 
-    return RefreshIndicator(
-      onRefresh: () => ref.read(vtopProvider.notifier).fetchExamSchedule(),
-      child: ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: examGroups.length,
-        itemBuilder: (context, index) {
-          final group = examGroups[index];
-          return _buildExamTypeSection(isDark, group.examType, group.exams);
-        },
-      ),
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: examGroups.length,
+      itemBuilder: (context, index) {
+        final group = examGroups[index];
+        return _buildExamTypeSection(isDark, group.examType, group.exams);
+      },
     );
   }
 
@@ -129,7 +124,6 @@ class _ExamScheduleScreenState extends ConsumerState<ExamScheduleScreen> {
     // Sort exams by date
     final sortedExams = List<ExamSlot>.from(exams);
     sortedExams.sort((a, b) => a.examDate.compareTo(b.examDate));
-    final examColor = ExamColors.getExamTypeColor(examType);
     
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -141,17 +135,8 @@ class _ExamScheduleScreenState extends ConsumerState<ExamScheduleScreen> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [examColor, examColor.withOpacity(0.8)],
-                  ),
+                  color: _getExamTypeColor(examType),
                   borderRadius: BorderRadius.circular(8),
-                  boxShadow: [
-                    BoxShadow(
-                      color: examColor.withOpacity(0.3),
-                      blurRadius: 4,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
                 ),
                 child: Text(
                   examType,
@@ -173,10 +158,324 @@ class _ExamScheduleScreenState extends ConsumerState<ExamScheduleScreen> {
             ],
           ),
         ),
-        ...sortedExams.map((exam) => ExamCard(exam: exam, examType: examType)),
+        ...sortedExams.map((exam) => _buildExamCard(isDark, exam, examType)),
         const SizedBox(height: 16),
       ],
     );
+  }
+
+  Widget _buildExamCard(bool isDark, ExamSlot exam, String examType) {
+    final isUpcoming = _isUpcomingExam(exam.examDate);
+    final isPast = _isPastExam(exam.examDate);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: isDark ? AppTheme.darkCard : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: isUpcoming
+            ? Border.all(color: AppTheme.primaryBlue, width: 2)
+            : null,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Stack(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Date box
+                Container(
+                  width: 60,
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  decoration: BoxDecoration(
+                    color: isPast
+                        ? (isDark ? Colors.white12 : Colors.black.withOpacity(0.05))
+                        : _getExamTypeColor(examType).withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    children: [
+                      Text(
+                        _getDayOfMonth(exam.examDate),
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          color: isPast
+                              ? (isDark ? Colors.white38 : Colors.black38)
+                              : _getExamTypeColor(examType),
+                        ),
+                      ),
+                      Text(
+                        _getMonth(exam.examDate),
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: isPast
+                              ? (isDark ? Colors.white38 : Colors.black38)
+                              : _getExamTypeColor(examType),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 16),
+                // Exam details
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: AppTheme.primaryBlue.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              exam.courseCode,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: isPast
+                                    ? (isDark ? Colors.white38 : Colors.black38)
+                                    : AppTheme.primaryBlue,
+                              ),
+                            ),
+                          ),
+                          if (exam.slot.isNotEmpty) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: isDark
+                                    ? Colors.white12
+                                    : Colors.black.withOpacity(0.05),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                exam.slot,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: isPast
+                                      ? (isDark ? Colors.white24 : Colors.black26)
+                                      : (isDark ? Colors.white54 : Colors.black45),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        exam.courseName,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: isPast
+                              ? (isDark ? Colors.white38 : Colors.black38)
+                              : (isDark ? Colors.white : Colors.black87),
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.access_time,
+                            size: 14,
+                            color: isPast
+                                ? (isDark ? Colors.white24 : Colors.black26)
+                                : (isDark ? Colors.white54 : Colors.black54),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            exam.examTime.isNotEmpty ? exam.examTime : 'TBA',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: isPast
+                                  ? (isDark ? Colors.white24 : Colors.black26)
+                                  : (isDark ? Colors.white60 : Colors.black54),
+                            ),
+                          ),
+                          if (exam.venue.isNotEmpty) ...[
+                            const SizedBox(width: 16),
+                            Icon(
+                              Icons.location_on_outlined,
+                              size: 14,
+                              color: isPast
+                                  ? (isDark ? Colors.white24 : Colors.black26)
+                                  : (isDark ? Colors.white54 : Colors.black54),
+                            ),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                exam.venue,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: isPast
+                                      ? (isDark ? Colors.white24 : Colors.black26)
+                                      : (isDark ? Colors.white60 : Colors.black54),
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (isUpcoming)
+            Positioned(
+              top: 8,
+              right: 8,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppTheme.primaryBlue,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Text(
+                  'UPCOMING',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+          if (isPast)
+            Positioned(
+              top: 8,
+              right: 8,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: isDark ? Colors.white12 : Colors.black12,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  'COMPLETED',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: isDark ? Colors.white38 : Colors.black38,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Color _getExamTypeColor(String examType) {
+    final type = examType.toUpperCase();
+    if (type.contains('CAT1') || type.contains('CAT-1')) {
+      return Colors.orange;
+    } else if (type.contains('CAT2') || type.contains('CAT-2')) {
+      return Colors.purple;
+    } else if (type.contains('FAT') || type.contains('FINAL')) {
+      return Colors.red;
+    }
+    return AppTheme.primaryBlue;
+  }
+
+  bool _isUpcomingExam(String dateStr) {
+    try {
+      // Try to parse date in common formats
+      final now = DateTime.now();
+      final examDate = _parseDate(dateStr);
+      if (examDate == null) return false;
+
+      // Upcoming = within next 7 days
+      final diff = examDate.difference(now).inDays;
+      return diff >= 0 && diff <= 7;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  bool _isPastExam(String dateStr) {
+    try {
+      final now = DateTime.now();
+      final examDate = _parseDate(dateStr);
+      if (examDate == null) return false;
+      return examDate.isBefore(now);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  DateTime? _parseDate(String dateStr) {
+    // Try multiple formats
+    final formats = [
+      RegExp(r'(\d{2})/(\d{2})/(\d{4})'), // DD/MM/YYYY
+      RegExp(r'(\d{2})-(\d{2})-(\d{4})'), // DD-MM-YYYY
+      RegExp(r'(\d{4})-(\d{2})-(\d{2})'), // YYYY-MM-DD
+    ];
+
+    for (final format in formats) {
+      final match = format.firstMatch(dateStr);
+      if (match != null) {
+        try {
+          if (dateStr.contains('/') || dateStr.contains('-') && dateStr.indexOf('-') == 2) {
+            // DD/MM/YYYY or DD-MM-YYYY
+            return DateTime(
+              int.parse(match.group(3)!),
+              int.parse(match.group(2)!),
+              int.parse(match.group(1)!),
+            );
+          } else {
+            // YYYY-MM-DD
+            return DateTime(
+              int.parse(match.group(1)!),
+              int.parse(match.group(2)!),
+              int.parse(match.group(3)!),
+            );
+          }
+        } catch (_) {}
+      }
+    }
+    return null;
+  }
+
+  String _getDayOfMonth(String dateStr) {
+    final date = _parseDate(dateStr);
+    if (date != null) {
+      return date.day.toString().padLeft(2, '0');
+    }
+    // Try to extract just the day
+    final match = RegExp(r'(\d{1,2})').firstMatch(dateStr);
+    return match?.group(1) ?? '??';
+  }
+
+  String _getMonth(String dateStr) {
+    final date = _parseDate(dateStr);
+    if (date != null) {
+      const months = [
+        'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
+        'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'
+      ];
+      return months[date.month - 1];
+    }
+    return '???';
   }
 
   Widget _buildNoExamsState(bool isDark) {

@@ -3,8 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/vtop_provider.dart';
 import '../models/vtop_models.dart';
 import '../theme/app_theme.dart';
-import '../widgets/attendance/attendance_card.dart';
-import '../widgets/attendance/attendance_colors.dart';
 
 class AttendanceScreen extends ConsumerStatefulWidget {
   const AttendanceScreen({super.key});
@@ -99,24 +97,22 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
 
   Widget _buildOverallAttendance(bool isDark, AttendanceData attendance) {
     final overall = attendance.overallPercentage;
-    final statusColors = AttendanceColors.getStatusColors(overall);
-    final isGood = overall >= 75;
+    final color = _getPercentageColor(overall);
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: isGood
-              ? [const Color(0xFF4CAF50), const Color(0xFF2E7D32)]
-              : [const Color(0xFFFF9800), const Color(0xFFE65100)],
+          colors: [
+            color.withOpacity(0.8),
+            color,
+          ],
         ),
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: (isGood ? const Color(0xFF4CAF50) : const Color(0xFFFF9800)).withOpacity(0.3),
+            color: color.withOpacity(0.3),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -190,18 +186,12 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
       return _buildEmptyState(isDark);
     }
 
-    return RefreshIndicator(
-      onRefresh: () => ref.read(vtopProvider.notifier).fetchAttendance(),
-      child: ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: courses.length,
-        itemBuilder: (context, index) {
-          return AttendanceCard(
-            course: courses[index],
-            onTap: () => _showAttendanceDetail(context, courses[index], isDark),
-          );
-        },
-      ),
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: courses.length,
+      itemBuilder: (context, index) {
+        return _buildCourseCard(isDark, courses[index]);
+      },
     );
   }
 
@@ -217,9 +207,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     );
   }
 
-  // Old _buildCourseCard removed - using AttendanceCard widget instead
-
-  Widget _buildOldCourseCard(bool isDark, AttendanceCourse course) {
+  Widget _buildCourseCard(bool isDark, AttendanceCourse course) {
     final color = _getPercentageColor(course.percentage);
     final isLow = course.percentage < 75;
 
@@ -690,61 +678,23 @@ class _AttendanceDetailSheetState extends ConsumerState<AttendanceDetailSheet> {
 
   Widget _buildSummary() {
     final percentage = widget.course.percentage;
-    final statusColors = AttendanceColors.getStatusColors(percentage);
-    final isLab = widget.course.isLab;
+    final color = _getPercentageColor(percentage);
 
     return Container(
       margin: const EdgeInsets.all(16),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: AttendanceColors.getCardGradient(isLab, widget.isDark),
-        ),
+        color: color.withOpacity(0.1),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: statusColors.$3.withOpacity(0.5)),
+        border: Border.all(color: color.withOpacity(0.3)),
       ),
-      child: Column(
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _buildSummaryItem('Present', '${widget.course.attendedClasses}', AttendanceColors.presentColor),
-              _buildSummaryItem('Absent', '${widget.course.absentClasses}', AttendanceColors.absentColor),
-              _buildSummaryItem('Total', '${widget.course.totalClasses}', AttendanceColors.totalColor),
-              _buildSummaryItem('Percentage', '${percentage.toStringAsFixed(1)}%', statusColors.$1),
-            ],
-          ),
-          if (widget.course.fatCatPercentage != '-' && widget.course.fatCatPercentage.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: widget.isDark ? Colors.black26 : Colors.white.withOpacity(0.6),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.calendar_today,
-                    size: 14,
-                    color: AttendanceColors.theoryIcon,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    'Between Exams: ${widget.course.fatCatPercentage}',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: widget.isDark ? Colors.white : const Color(0xFF1F2937),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+          _buildSummaryItem('Present', '${widget.course.attendedClasses}', AppTheme.successGreen),
+          _buildSummaryItem('Absent', '${widget.course.absentClasses}', AppTheme.errorRed),
+          _buildSummaryItem('Total', '${widget.course.totalClasses}', AppTheme.primaryBlue),
+          _buildSummaryItem('Percentage', '${percentage.toStringAsFixed(1)}%', color),
         ],
       ),
     );
@@ -841,8 +791,7 @@ class _AttendanceDetailSheetState extends ConsumerState<AttendanceDetailSheet> {
 
   Widget _buildDetailRow(AttendanceDetail detail, int index) {
     final isPresent = detail.status.toLowerCase().contains('present');
-    final statusColor = isPresent ? AttendanceColors.presentColor : AttendanceColors.absentColor;
-    final statusBgColor = isPresent ? AttendanceColors.excellentBackground : AttendanceColors.criticalBackground;
+    final statusColor = isPresent ? AppTheme.successGreen : AppTheme.errorRed;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -851,11 +800,11 @@ class _AttendanceDetailSheetState extends ConsumerState<AttendanceDetailSheet> {
         color: widget.isDark 
             ? Colors.white.withOpacity(0.05) 
             : Colors.grey.withOpacity(0.05),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(8),
         border: Border(
           left: BorderSide(
             color: statusColor,
-            width: 4,
+            width: 3,
           ),
         ),
       ),
@@ -894,33 +843,18 @@ class _AttendanceDetailSheetState extends ConsumerState<AttendanceDetailSheet> {
               ),
             ),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
-              color: statusBgColor,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(
-                color: statusColor.withOpacity(0.3),
-                width: 1,
-              ),
+              color: statusColor.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(4),
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  isPresent ? Icons.check_circle : Icons.cancel,
-                  size: 12,
-                  color: statusColor,
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  detail.status,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: statusColor,
-                  ),
-                ),
-              ],
+            child: Text(
+              detail.status,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: statusColor,
+              ),
             ),
           ),
         ],
@@ -929,7 +863,9 @@ class _AttendanceDetailSheetState extends ConsumerState<AttendanceDetailSheet> {
   }
 
   Color _getPercentageColor(double percentage) {
-    final colors = AttendanceColors.getStatusColors(percentage);
-    return colors.$1;
+    if (percentage >= 85) return AppTheme.successGreen;
+    if (percentage >= 75) return AppTheme.primaryBlue;
+    if (percentage >= 65) return AppTheme.warningOrange;
+    return AppTheme.errorRed;
   }
 }
