@@ -185,6 +185,44 @@ class VtopService {
     _isAuthenticated = authenticated;
   }
   
+  /// Validate if current session is still active
+  /// Based on vitap-mate's fetchIsAuth approach - tries to access a protected page
+  Future<bool> validateSession() async {
+    if (_cookie == null || _cookie!.isEmpty) return false;
+    
+    try {
+      // Try to access the content page - if we get redirected to login, session is invalid
+      final response = await _doGet('$baseUrl/vtop/content');
+      
+      if (response.statusCode >= 400) return false;
+      
+      // Check if we got the actual content page or were redirected to login
+      final body = response.body.toLowerCase();
+      
+      // If the page contains login form elements, session is expired
+      if (body.contains('id="loginform"') || 
+          body.contains('id="loginbutton"') ||
+          body.contains('id="captchaimg"') ||
+          body.contains('/vtop/prelogin/')) {
+        return false;
+      }
+      
+      // If we see dashboard/content elements, session is valid
+      if (body.contains('sidebar') ||
+          body.contains('dashboard') ||
+          body.contains('logout') ||
+          body.contains('academics/') ||
+          body.contains('studentname')) {
+        return true;
+      }
+      
+      // Ambiguous - assume valid if we got 200 OK
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
+    }
+  }
+  
   /// Get proper headers for VTOP requests - matching the reference implementation
   Map<String, String> _getVtopHeaders({String? contentType}) {
     final headers = <String, String>{

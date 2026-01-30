@@ -41,6 +41,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WindowListener {
   Widget build(BuildContext context) {
     final selectedNav = ref.watch(selectedNavProvider);
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final isVtopFullscreen = ref.watch(vtopFullscreenProvider);
+
+    // If VTOP is selected and in fullscreen mode, show only VTOP
+    if (selectedNav == 6 && isVtopFullscreen) {
+      return const Scaffold(
+        body: VtopScreen(),
+      );
+    }
 
     return Scaffold(
       body: Column(

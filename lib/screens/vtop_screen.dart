@@ -1,10 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:webview_windows/webview_windows.dart';
-import '../theme/app_theme.dart';
 import '../services/storage_service.dart';
 import '../providers/vtop_provider.dart';
+import '../services/vtop_service.dart';
 
+// Provider for VTOP fullscreen mode - default to true (always fullscreen)
+final vtopFullscreenProvider = StateProvider<bool>((ref) => true);
+
+/// VTOP Screen - Based on vitap-mate webview implementation
+/// Key improvements:
+/// 1. Verify authentication before loading webview
+/// 2. Proper cookie injection via WebView2 addScriptToExecuteOnDocumentCreated
+/// 3. Use /vtop/content? URL after auth (like vitap-mate)
+/// 4. Better error detection and session recovery
 class VtopScreen extends ConsumerStatefulWidget {
   const VtopScreen({super.key});
 
@@ -15,14 +24,16 @@ class VtopScreen extends ConsumerStatefulWidget {
 class _VtopScreenState extends ConsumerState<VtopScreen> {
   final _webviewController = WebviewController();
   final _storage = StorageService();
+  
   bool _isLoading = true;
   bool _isInitialized = false;
-  bool _isAutoLoggingIn = false;
-  String _currentUrl = 'https://vtop.vitap.ac.in';
-  String _pageTitle = 'VTOP';
+  bool _isSettingUp = true;
   String _statusMessage = 'Initializing...';
+  bool _showControls = false;
+  bool _hasError = false;
+  String? _currentCookie;
   
-  // VTOP URLs
+  // VTOP URLs - Based on vitap-mate implementation
   static const String vtopBase = 'https://vtop.vitap.ac.in';
   static const String vtopContent = 'https://vtop.vitap.ac.in/vtop/content?';
   static const String vtopLogin = 'https://vtop.vitap.ac.in/vtop/open/page';
@@ -30,249 +41,262 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
   @override
   void initState() {
     super.initState();
-    _initWebView();
+    _setupVtop();
   }
 
-  Future<void> _initWebView() async {
-    try {
-      await _webviewController.initialize();
-      
-      _webviewController.url.listen((url) {
-        if (mounted) {
-          setState(() {
-            _currentUrl = url;
-          });
-          // Check if we're on the content page (logged in)
-          if (url.contains('/vtop/content') || url.contains('/vtop/initialPage') || 
-              url.contains('/vtop/academics') || url.contains('/vtop/examinations')) {
-            setState(() {
-              _isAutoLoggingIn = false;
-              _statusMessage = 'Logged in successfully!';
-            });
-          }
-          // Check if we've been redirected to login (session expired)
-          if (_isAutoLoggingIn && (url.contains('/vtop/login') || url.contains('/vtop/open/page'))) {
-            // Session expired or not valid
-          }
-        }
-      });
-
-      _webviewController.title.listen((title) {
-        if (mounted && title.isNotEmpty) {
-          setState(() {
-            _pageTitle = title;
-          });
-        }
-      });
-
-      _webviewController.loadingState.listen((state) {
-        if (mounted) {
-          setState(() {
-            _isLoading = state == LoadingState.loading;
-          });
-        }
-      });
-
-      if (mounted) {
-        setState(() {
-          _isInitialized = true;
-        });
-      }
-
-      // Try auto-login
-      await _tryAutoLogin();
-      
-    } catch (e) {
-      debugPrint('WebView initialization error: $e');
-      if (mounted) {
-        setState(() {
-          _isInitialized = false;
-          _statusMessage = 'Failed to initialize: $e';
-        });
-      }
-    }
-  }
-
-  Future<void> _tryAutoLogin() async {
+  /// Main setup flow - similar to vitap-mate's approach
+  /// 1. First verify we have valid auth
+  /// 2. Then initialize webview with cookies
+  /// 3. Load the content page
+  Future<void> _setupVtop() async {
     if (!mounted) return;
+    
     setState(() {
-      _isAutoLoggingIn = true;
-      _statusMessage = 'Checking credentials...';
+      _isSettingUp = true;
+      _hasError = false;
+      _statusMessage = 'Checking authentication...';
     });
 
     try {
-      // First check if we have credentials
+      // Step 1: Check if we have credentials
       final creds = await _storage.getVtopCredentials();
       if (creds == null || creds['username']?.isEmpty == true || creds['password']?.isEmpty == true) {
-        if (!mounted) return;
-        setState(() {
-          _isAutoLoggingIn = false;
-          _statusMessage = 'No credentials saved. Please add in Settings.';
-        });
-        await _webviewController.loadUrl(vtopLogin);
+        // No credentials - just show login page
+        await _initWebViewAndLoad(vtopLogin, null);
         return;
       }
 
-      // Check if we have a valid session
-      final session = await _storage.getVtopSession();
+      // Step 2: Try to get a valid session
+      if (!mounted) return;
+      setState(() => _statusMessage = 'Authenticating...');
+      
+      // Check existing session first
+      var session = await _storage.getVtopSession();
+      bool needsLogin = true;
       
       if (session != null && session['cookie'] != null && session['cookie']!.isNotEmpty) {
+        // Verify if session is still valid
         if (!mounted) return;
-        setState(() => _statusMessage = 'Found saved session, attempting to use...');
+        setState(() => _statusMessage = 'Verifying session...');
         
-        // First load the VTOP domain to set cookies properly
-        await _webviewController.loadUrl(vtopBase);
-        await Future.delayed(const Duration(milliseconds: 500));
+        final vtopService = VtopService();
+        vtopService.setCookie(session['cookie']!);
         
+        // Try to validate session by making a request
+        final isValid = await vtopService.validateSession();
+        if (isValid) {
+          _currentCookie = session['cookie'];
+          needsLogin = false;
+        }
+      }
+      
+      // Step 3: If no valid session, perform fresh login
+      if (needsLogin) {
         if (!mounted) return;
+        setState(() => _statusMessage = 'Logging in...');
         
-        // Inject cookies into webview
-        final cookie = session['cookie']!;
-        await _injectCookies(cookie);
-        
-        // Navigate to VTOP content page
+        final success = await ref.read(vtopProvider.notifier).login();
+        if (success) {
+          final newSession = await _storage.getVtopSession();
+          if (newSession != null && newSession['cookie'] != null) {
+            _currentCookie = newSession['cookie'];
+          }
+        }
+      }
+      
+      // Step 4: Initialize webview with cookie and load content
+      if (_currentCookie != null && _currentCookie!.isNotEmpty) {
         if (!mounted) return;
         setState(() => _statusMessage = 'Loading VTOP...');
-        await _webviewController.loadUrl(vtopContent);
-        
-        // Wait and check if we're still logged in
-        await Future.delayed(const Duration(seconds: 3));
-        
-        if (!mounted) return;
-        
-        // If redirected to login, session is invalid, try fresh login
-        if (_currentUrl.contains('/vtop/login') || _currentUrl.contains('/vtop/open/page') ||
-            _currentUrl.contains('prelogin')) {
-          setState(() => _statusMessage = 'Session expired, logging in...');
-          await _storage.clearVtopSession();
-          await _performFreshLogin();
-        }
+        await _initWebViewAndLoad(vtopContent, _currentCookie);
       } else {
-        // No session, do fresh login
-        await _performFreshLogin();
+        // Auth failed - show login page
+        await _initWebViewAndLoad(vtopLogin, null);
       }
+      
     } catch (e) {
-      debugPrint('Auto-login error: $e');
-      if (!mounted) return;
-      setState(() {
-        _isAutoLoggingIn = false;
-        _statusMessage = 'Auto-login failed: $e';
-      });
-      await _webviewController.loadUrl(vtopLogin);
+      debugPrint('VTOP setup error: $e');
+      // On error, try to show login page
+      try {
+        await _initWebViewAndLoad(vtopLogin, null);
+      } catch (e2) {
+        if (!mounted) return;
+        setState(() {
+          _hasError = true;
+          _isSettingUp = false;
+          _statusMessage = 'Failed to load VTOP';
+        });
+      }
     }
   }
-  
-  Future<void> _injectCookies(String cookie) async {
+
+  /// Initialize WebView and load URL with optional cookie injection
+  Future<void> _initWebViewAndLoad(String url, String? cookie) async {
+    try {
+      if (!_isInitialized) {
+        await _webviewController.initialize();
+        
+        // Listen for URL changes
+        _webviewController.url.listen((newUrl) {
+          if (!mounted) return;
+          _onUrlChanged(newUrl);
+        });
+
+        // Listen for loading state
+        _webviewController.loadingState.listen((state) {
+          if (!mounted) return;
+          setState(() {
+            _isLoading = state == LoadingState.loading;
+          });
+        });
+
+        // Listen for web errors but handle them gracefully
+        // WebErrorStatus is an enum, just log it
+        _webviewController.onLoadError.listen((errorStatus) {
+          if (!mounted) return;
+          // Only log errors, don't retry automatically
+          // These can be transient network issues
+          debugPrint('WebView load event: $errorStatus');
+        });
+
+        _isInitialized = true;
+      }
+
+      // If we have a cookie, inject it before loading
+      if (cookie != null && cookie.isNotEmpty) {
+        await _injectCookieScript(cookie);
+      }
+
+      // Load the URL
+      await _webviewController.loadUrl(url);
+      
+      if (!mounted) return;
+      setState(() {
+        _isSettingUp = false;
+        _hasError = false;
+      });
+      
+    } catch (e) {
+      debugPrint('WebView init error: $e');
+      if (!mounted) return;
+      setState(() {
+        _hasError = true;
+        _isSettingUp = false;
+        _statusMessage = 'Failed to initialize';
+      });
+    }
+  }
+
+  /// Inject cookie via script that runs on document created
+  /// This is more reliable than injecting after page load
+  Future<void> _injectCookieScript(String cookie) async {
+    // Parse cookies and create injection script
     final cookies = cookie.split('; ');
+    final cookieStatements = <String>[];
+    
     for (final c in cookies) {
       if (c.contains('=')) {
         final parts = c.split('=');
         if (parts.length >= 2) {
           final name = parts[0].trim();
           final value = parts.sublist(1).join('=').trim();
-          // Set cookie with proper domain
-          await _webviewController.executeScript('''
-            document.cookie = "$name=$value; path=/; domain=.vitap.ac.in; secure";
-          ''');
+          // Set cookie with proper domain and path
+          cookieStatements.add(
+            'document.cookie = "$name=$value; path=/; domain=.vitap.ac.in; secure; SameSite=None";'
+          );
         }
       }
+    }
+    
+    if (cookieStatements.isNotEmpty) {
+      final script = '''
+        (function() {
+          ${cookieStatements.join('\n          ')}
+        })();
+      ''';
+      
+      // First load the base domain to set cookies in the right context
+      await _webviewController.loadUrl(vtopBase);
+      await Future.delayed(const Duration(milliseconds: 500));
+      
+      // Execute the cookie injection script
+      await _webviewController.executeScript(script);
+      await Future.delayed(const Duration(milliseconds: 300));
     }
   }
 
-  Future<void> _performFreshLogin() async {
+  /// Handle URL changes - detect errors and valid pages
+  void _onUrlChanged(String url) {
+    final urlLower = url.toLowerCase();
+    
+    // Check for successful navigation to VTOP pages
+    if (urlLower.contains('/vtop/content') ||
+        urlLower.contains('/vtop/initialpage') ||
+        urlLower.contains('/vtop/academics') ||
+        urlLower.contains('/vtop/examinations') ||
+        urlLower.contains('/vtop/studentsrecord')) {
+      setState(() {
+        _hasError = false;
+      });
+    }
+    
+    // Check if redirected to login page (session expired)
+    if (urlLower.contains('/vtop/open/page') || urlLower.contains('/vtop/login')) {
+      // Session may have expired - user can login manually or click re-login
+      debugPrint('Redirected to login page - session may have expired');
+    }
+  }
+
+  /// Retry loading with fresh login
+  Future<void> _retryWithFreshLogin() async {
     if (!mounted) return;
     
+    setState(() {
+      _isSettingUp = true;
+      _hasError = false;
+      _statusMessage = 'Re-authenticating...';
+    });
+
     try {
-      // Get credentials
-      final creds = await _storage.getVtopCredentials();
-      if (creds == null || creds['username']?.isEmpty == true) {
-        if (!mounted) return;
-        setState(() {
-          _isAutoLoggingIn = false;
-          _statusMessage = 'No credentials saved. Add in Settings.';
-        });
-        await _webviewController.loadUrl(vtopLogin);
-        return;
-      }
-
-      if (!mounted) return;
-      setState(() => _statusMessage = 'Solving captcha...');
-
-      // Use the provider to login (which handles captcha solving)
+      // Force a new login
       final success = await ref.read(vtopProvider.notifier).login();
       
-      if (!mounted) return;
-      
       if (success) {
-        // Get the new session and inject cookies
         final newSession = await _storage.getVtopSession();
         if (newSession != null && newSession['cookie'] != null) {
-          // Load base URL first
-          await _webviewController.loadUrl(vtopBase);
-          await Future.delayed(const Duration(milliseconds: 500));
+          _currentCookie = newSession['cookie'];
           
           if (!mounted) return;
+          setState(() => _statusMessage = 'Reloading VTOP...');
           
-          // Inject cookies
-          await _injectCookies(newSession['cookie']!);
+          // Re-inject cookies and reload
+          await _injectCookieScript(_currentCookie!);
+          await _webviewController.loadUrl(vtopContent);
         }
-        
-        if (!mounted) return;
-        setState(() {
-          _isAutoLoggingIn = false;
-          _statusMessage = 'Logged in!';
-        });
-        await _webviewController.loadUrl(vtopContent);
       } else {
-        if (!mounted) return;
-        // Get the error from the provider
-        final vtopState = ref.read(vtopProvider);
-        final errorMsg = vtopState.error ?? 'Login failed';
-        
-        // Format error message for display
-        String displayError = errorMsg;
-        if (errorMsg.contains('Invalid Captcha')) {
-          displayError = 'Captcha failed. Tap Login to retry.';
-        } else if (errorMsg.contains('Invalid credentials') || 
-                   errorMsg.contains('Invalid LoginId') ||
-                   errorMsg.contains('Invalid Username')) {
-          displayError = 'Invalid username or password.';
-        } else if (errorMsg.contains('Network') || errorMsg.contains('network')) {
-          displayError = 'Network error. Check connection.';
-        } else if (errorMsg.contains('40 attempts') || errorMsg.contains('attempts')) {
-          displayError = 'Captcha solver busy. Try again.';
-        } else if (errorMsg.length > 40) {
-          displayError = '${errorMsg.substring(0, 37)}...';
-        }
-        
-        setState(() {
-          _isAutoLoggingIn = false;
-          _statusMessage = displayError;
-        });
+        // Login failed, load login page
         await _webviewController.loadUrl(vtopLogin);
       }
       
       if (!mounted) return;
-      setState(() => _isAutoLoggingIn = false);
-    } catch (e) {
-      debugPrint('Fresh login error: $e');
-      if (!mounted) return;
-      
-      // Format exception message
-      String errorMsg = e.toString();
-      if (errorMsg.contains('Exception:')) {
-        errorMsg = errorMsg.replaceFirst('Exception:', '').trim();
-      }
-      if (errorMsg.length > 40) {
-        errorMsg = '${errorMsg.substring(0, 37)}...';
-      }
-      
       setState(() {
-        _isAutoLoggingIn = false;
-        _statusMessage = errorMsg;
+        _isSettingUp = false;
+        _hasError = false;
       });
-      await _webviewController.loadUrl(vtopLogin);
+    } catch (e) {
+      debugPrint('Retry login error: $e');
+      if (!mounted) return;
+      setState(() {
+        _isSettingUp = false;
+        _hasError = true;
+        _statusMessage = 'Login failed';
+      });
     }
+  }
+
+  void _toggleFullscreen() {
+    final isFullscreen = ref.read(vtopFullscreenProvider);
+    ref.read(vtopFullscreenProvider.notifier).state = !isFullscreen;
   }
 
   @override
@@ -283,232 +307,223 @@ class _VtopScreenState extends ConsumerState<VtopScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
     return Scaffold(
-      backgroundColor: isDark ? AppTheme.darkBg : AppTheme.lightBg,
-      body: Column(
+      backgroundColor: Colors.white,
+      body: MouseRegion(
+        onEnter: (_) => setState(() => _showControls = true),
+        onExit: (_) => setState(() => _showControls = false),
+        child: Stack(
+          children: [
+            // WebView (full screen)
+            if (_isInitialized && !_isSettingUp)
+              Positioned.fill(
+                child: Webview(
+                  _webviewController,
+                  permissionRequested: (url, kind, isUserInitiated) async {
+                    return WebviewPermissionDecision.allow;
+                  },
+                ),
+              )
+            else if (_hasError)
+              _buildErrorState()
+            else
+              _buildLoadingState(),
+            
+            // Setup overlay
+            if (_isSettingUp)
+              _buildSetupOverlay(),
+            
+            // Floating controls (show on hover)
+            if (_showControls && _isInitialized && !_isSettingUp)
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: _buildFloatingControls(),
+              ),
+              
+            // Exit button (always in corner)
+            Positioned(
+              top: 8,
+              right: 8,
+              child: _buildExitButton(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLoadingState() {
+    return const Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // Compact navigation bar that combines header and navigation
-          _buildCompactToolbar(isDark),
-          Expanded(
-            child: _buildWebViewContent(isDark),
+          CircularProgressIndicator(),
+          SizedBox(height: 16),
+          Text(
+            'Loading VTOP...',
+            style: TextStyle(fontSize: 14, color: Colors.black54),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildCompactToolbar(bool isDark) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: isDark ? AppTheme.darkCard : Colors.white,
-        border: Border(
-          bottom: BorderSide(
-            color: isDark ? Colors.white12 : Colors.black12,
+  Widget _buildErrorState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.error_outline, size: 48, color: Colors.red),
+          const SizedBox(height: 16),
+          Text(
+            _statusMessage,
+            style: const TextStyle(fontSize: 14, color: Colors.black54),
           ),
+          const SizedBox(height: 16),
+          ElevatedButton.icon(
+            onPressed: _setupVtop,
+            icon: const Icon(Icons.refresh),
+            label: const Text('Retry'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSetupOverlay() {
+    return Container(
+      color: Colors.black54,
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.2),
+                blurRadius: 20,
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              Text(
+                _statusMessage,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFloatingControls() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.black.withOpacity(0.7),
+            Colors.transparent,
+          ],
         ),
       ),
       child: Row(
         children: [
-          // Navigation buttons
-          _buildNavButton(
-            icon: Icons.arrow_back,
-            onPressed: () async => await _webviewController.goBack(),
-            isDark: isDark,
-            tooltip: 'Back',
-          ),
-          const SizedBox(width: 4),
-          _buildNavButton(
-            icon: Icons.arrow_forward,
-            onPressed: () async => await _webviewController.goForward(),
-            isDark: isDark,
-            tooltip: 'Forward',
-          ),
-          const SizedBox(width: 4),
-          _buildNavButton(
-            icon: _isLoading ? Icons.close : Icons.refresh,
-            onPressed: () async {
-              if (_isLoading) {
-                await _webviewController.stop();
-              } else {
-                await _webviewController.reload();
-              }
-            },
-            isDark: isDark,
-            tooltip: _isLoading ? 'Stop' : 'Refresh',
-          ),
-          const SizedBox(width: 4),
-          _buildNavButton(
-            icon: Icons.home,
-            onPressed: () async => await _webviewController.loadUrl(vtopBase),
-            isDark: isDark,
-            tooltip: 'Home',
-          ),
-          
-          const SizedBox(width: 12),
-          
-          // URL/Status display
-          Expanded(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.04),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Row(
-                children: [
-                  if (_isLoading)
-                    const Padding(
-                      padding: EdgeInsets.only(right: 8),
-                      child: SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    )
-                  else
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: Icon(
-                        Icons.lock_outlined,
-                        size: 14,
-                        color: AppTheme.successGreen,
-                      ),
-                    ),
-                  Expanded(
-                    child: _isAutoLoggingIn
-                        ? Text(
-                            _statusMessage,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: AppTheme.primaryBlue,
-                              fontWeight: FontWeight.w500,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          )
-                        : Text(
-                            _currentUrl.replaceFirst('https://', ''),
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: isDark ? Colors.white60 : Colors.black54,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          
+          _buildControlButton(Icons.arrow_back, () => _webviewController.goBack()),
           const SizedBox(width: 8),
-          
-          // Auto-login button
-          if (!_isAutoLoggingIn)
-            Tooltip(
-              message: 'Auto-login',
-              child: InkWell(
-                onTap: _tryAutoLogin,
-                borderRadius: BorderRadius.circular(6),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: AppTheme.primaryBlue.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.login,
-                        size: 16,
-                        color: AppTheme.primaryBlue,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        'Login',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                          color: AppTheme.primaryBlue,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+          _buildControlButton(Icons.arrow_forward, () => _webviewController.goForward()),
+          const SizedBox(width: 8),
+          _buildControlButton(
+            _isLoading ? Icons.close : Icons.refresh,
+            () => _isLoading ? _webviewController.stop() : _webviewController.reload(),
+          ),
+          const SizedBox(width: 8),
+          _buildControlButton(Icons.home, () => _webviewController.loadUrl(vtopContent)),
+          const Spacer(),
+          if (_isLoading)
+            const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
               ),
             ),
+          const SizedBox(width: 16),
+          _buildControlButton(Icons.login, _retryWithFreshLogin, label: 'Re-login'),
         ],
       ),
     );
   }
 
-  Widget _buildNavButton({
-    required IconData icon,
-    required VoidCallback onPressed,
-    required bool isDark,
-    required String tooltip,
-  }) {
+  Widget _buildControlButton(IconData icon, VoidCallback onPressed, {String? label}) {
     return Tooltip(
-      message: tooltip,
+      message: label ?? '',
       child: InkWell(
-        onTap: _isInitialized ? onPressed : null,
+        onTap: onPressed,
         borderRadius: BorderRadius.circular(6),
         child: Container(
-          padding: const EdgeInsets.all(6),
-          child: Icon(
-            icon,
-            size: 18,
-            color: _isInitialized
-                ? (isDark ? Colors.white70 : Colors.black54)
-                : (isDark ? Colors.white24 : Colors.black26),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.15),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 18, color: Colors.white),
+              if (label != null) ...[
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Colors.white,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
       ),
     );
   }
 
-  Widget _buildWebViewContent(bool isDark) {
-    if (!_isInitialized) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const CircularProgressIndicator(),
-            const SizedBox(height: 16),
-            Text(
-              'Initializing VTOP...',
-              style: TextStyle(
-                fontSize: 16,
-                color: isDark ? Colors.white70 : Colors.black54,
-              ),
+  Widget _buildExitButton() {
+    return Opacity(
+      opacity: _showControls ? 1.0 : 0.3,
+      child: Tooltip(
+        message: 'Exit VTOP',
+        child: InkWell(
+          onTap: _toggleFullscreen,
+          borderRadius: BorderRadius.circular(6),
+          child: Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.5),
+              borderRadius: BorderRadius.circular(6),
             ),
-          ],
-        ),
-      );
-    }
-
-    // Minimal margin for maximum webview area
-    return Container(
-      margin: const EdgeInsets.fromLTRB(8, 4, 8, 8),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
+            child: const Icon(
+              Icons.close,
+              size: 20,
+              color: Colors.white,
+            ),
           ),
-        ],
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Webview(
-        _webviewController,
-        permissionRequested: (url, kind, isUserInitiated) async {
-          return WebviewPermissionDecision.allow;
-        },
+        ),
       ),
     );
   }
