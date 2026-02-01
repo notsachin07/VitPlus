@@ -64,8 +64,11 @@ List<TimetableSlot> addFreeSlots(List<TimetableSlot> slots) {
       
       final gapMinutes = (nextStart - currentEnd).inMinutes;
       
-      // Add free slot if gap is at least 15 minutes
-      if (gapMinutes >= 15) {
+
+      final gapHours = gapMinutes ~/ 60;
+      
+      // Add free slot if gap is at least 1 hour (61+ minutes)
+      if (gapHours >= 1) {
         result.add(TimetableSlot(
           day: slots[i].day,
           startTime: slots[i].endTime,
@@ -74,7 +77,7 @@ List<TimetableSlot> addFreeSlots(List<TimetableSlot> slots) {
           courseName: 'Free Time',
           venue: '',
           faculty: '',
-          slotName: '$gapMinutes',
+          slotName: '$gapHours',
           serial: -1, // Mark as free slot
         ));
       }

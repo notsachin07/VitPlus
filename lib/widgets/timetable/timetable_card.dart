@@ -367,8 +367,9 @@ class _TimetableCardState extends ConsumerState<TimetableCard>
   }
 
   Widget _buildFreeTimeCard(bool isDark) {
-    // Calculate duration in minutes from slot info
-    final durationMinutes = _calculateDuration();
+    // Get gap hours from slotName (calculated using floor division by 60)
+    final gapHours = int.tryParse(widget.slot.slotName) ?? 0;
+    final hourText = gapHours == 1 ? '1 hour gap' : '$gapHours hours gap';
     
     return Column(
       children: [
@@ -415,7 +416,7 @@ class _TimetableCardState extends ConsumerState<TimetableCard>
             _buildDetailChip(
               isDark,
               icon: Icons.timer_outlined,
-              text: '$durationMinutes min break',
+              text: hourText,
               color: TimetableColors.freeTimeIcon,
             ),
           ],
